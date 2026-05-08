@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI-First Quant OS｜高保真原型</title>
+  <style>
+    :root {
+      --bg: #070912;
+      --bg-soft: #0c1020;
+      --panel: rgba(18, 24, 44, 0.78);
+      --panel-strong: rgba(21, 29, 54, 0.96);
+      --panel-light: rgba(255, 255, 255, 0.055);
+      --line: rgba(255, 255, 255, 0.095);
+      --line-strong: rgba(255, 255, 255, 0.18);
+      --text: #eef4ff;
+      --muted: #8f9bb7;
+      --subtle: #5f6b85;
+      --blue: #4c8dff;
+      --cyan: #42e8ff;
+      --green: #4ff0a2;
+      --yellow: #ffd166;
+      --orange: #ff9f43;
+      --red: #ff5c7c;
+      --purple: #a98bff;
+      --pink: #ff6bd5;
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+      --radius-xl: 28px;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: var(--font);
+      background:
+        radial-gradient(circle at 20% -10%, rgba(76, 141, 255, 0.26), transparent 34%),
+        radial-gradient(circle at 92% 8%, rgba(169, 139, 255, 0.18), transparent 30%),
+        radial-gradient(circle at 72% 98%, rgba(66, 232, 255, 0.13), transparent 28%),
+        linear-gradient(145deg, #050712 0%, #080b16 36%, #0c1020 100%);
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 52px 52px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.75), transparent 90%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .app {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 24px 18px;
+      border-right: 1px solid var(--line);
+      background: rgba(5, 8, 18, 0.68);
+      backdrop-filter: blur(28px);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 10px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .logo {
+      width: 46px;
+      height: 46px;
+      border-radius: 16px;
+      background:
+        radial-gradient(circle at 34% 26%, #ffffff, transparent 12%),
+        linear-gradient(135deg, var(--cyan), var(--blue) 48%, var(--purple));
+      box-shadow: 0 18px 48px rgba(76, 141, 255, 0.38);
+      position: relative;
+    }
+
+    .logo::after {
+      content: "";
+      position: absolute;
+      inset: 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, .6);
+      opacity: .72;
+    }
+
+    .brand h1 {
+      font-size: 16px;
+      margin: 0;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .nav-section-title {
+      margin: 8px 12px 8px;
+      color: var(--subtle);
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .nav button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 12px;
+      border: 1px solid transparent;
+      color: #b7c2de;
+      background: transparent;
+      border-radius: 16px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 14px;
+      font-weight: 650;
+      transition: .2s ease;
+    }
+
+    .nav button:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .nav button.active {
+      color: #ffffff;
+      border-color: rgba(76, 141, 255, 0.34);
+      background: linear-gradient(135deg, rgba(76, 141, 255, 0.18), rgba(66, 232, 255, 0.07));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 18px 40px rgba(0,0,0,.18);
+    }
+
+    .nav-ico {
+      width: 26px;
+      height: 26px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      background: rgba(255, 255, 255, 0.07);
+      font-size: 13px;
+      flex: 0 0 auto;
+    }
+
+    .side-card {
+      margin-top: auto;
+      padding: 16px;
+      border: 1px solid rgba(66, 232, 255, .18);
+      background:
+        radial-gradient(circle at 100% 0, rgba(66, 232, 255, .16), transparent 40%),
+        rgba(255, 255, 255, 0.045);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .side-card .label {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+
+    .side-card .score {
+      margin-top: 10px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .score strong { font-size: 32px; letter-spacing: -0.06em; }
+    .score span { color: var(--green); font-size: 13px; font-weight: 800; }
+
+    .mini-bars {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      align-items: end;
+      gap: 4px;
+      height: 48px;
+    }
+
+    .mini-bars i {
+      display: block;
+      border-radius: 999px 999px 3px 3px;
+      background: linear-gradient(to top, var(--blue), var(--cyan));
+      opacity: .82;
+    }
+
+    main {
+      min-width: 0;
+      padding: 24px 28px 48px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 0 22px;
+      background: linear-gradient(to bottom, rgba(7, 9, 18, .92), rgba(7, 9, 18, .7), transparent);
+      backdrop-filter: blur(8px);
+    }
+
+    .search {
+      flex: 1;
+      max-width: 760px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.055);
+      border-radius: 18px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    .search input {
+      width: 100%;
+      border: 0;
+      outline: none;
+      color: var(--text);
+      background: transparent;
+      font-size: 14px;
+    }
+
+    .search input::placeholder { color: #69748d; }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #c9d4ee;
+      background: rgba(255, 255, 255, 0.045);
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 6px rgba(79, 240, 162, .09), 0 0 20px rgba(79,240,162,.65);
+    }
+
+    .btn {
+      border: 0;
+      color: #ffffff;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      border-radius: 16px;
+      padding: 12px 15px;
+      font-weight: 850;
+      cursor: pointer;
+      box-shadow: 0 16px 44px rgba(76, 141, 255, 0.28);
+      transition: .2s ease;
+    }
+
+    .btn:hover { transform: translateY(-1px); filter: saturate(1.08); }
+    .btn.secondary {
+      background: rgba(255, 255, 255, 0.075);
+      border: 1px solid var(--line);
+      box-shadow: none;
+      color: #d8e2f8;
+    }
+    .btn.danger { background: linear-gradient(135deg, #ff5c7c, #ff9f43); }
+    .btn.success { background: linear-gradient(135deg, #22d77b, #42e8ff); }
+
+    .screen { display: none; animation: fade .28s ease; }
+    .screen.active { display: block; }
+    @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      border-radius: 34px;
+      background:
+        radial-gradient(circle at 82% 12%, rgba(66, 232, 255, 0.17), transparent 34%),
+        radial-gradient(circle at 55% 80%, rgba(169, 139, 255, 0.18), transparent 35%),
+        linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.035));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -90px;
+      top: -80px;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      background: conic-gradient(from 160deg, rgba(66,232,255,.1), rgba(76,141,255,.25), rgba(169,139,255,.14), rgba(66,232,255,.1));
+      filter: blur(1px);
+      opacity: .9;
+    }
+
+    .hero-inner { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.3fr) 460px; gap: 24px; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(66, 232, 255, 0.22);
+      color: #baf8ff;
+      background: rgba(66, 232, 255, 0.07);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    h2 {
+      margin: 18px 0 10px;
+      font-size: clamp(34px, 4.2vw, 64px);
+      line-height: .94;
+      letter-spacing: -0.07em;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #fff, #8fefff 45%, #b79bff);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 0;
+      color: #a8b4cf;
+      line-height: 1.75;
+      font-size: 15px;
+    }
+
+    .hero-actions { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+    .ai-card {
+      border: 1px solid var(--line);
+      background: rgba(4, 7, 16, 0.48);
+      border-radius: 28px;
+      padding: 18px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    }
+
+    .ai-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 16px; }
+    .ai-card-title { font-weight: 900; font-size: 14px; }
+    .status-chip {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(79, 240, 162, .11);
+      color: #9cffcc;
+      border: 1px solid rgba(79, 240, 162, .22);
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .agent-stack { display: flex; flex-direction: column; gap: 10px; }
+    .agent-row {
+      display: grid;
+      grid-template-columns: 34px minmax(0,1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.052);
+      border: 1px solid rgba(255,255,255,.075);
+    }
+    .agent-avatar {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(76,141,255,.55), rgba(66,232,255,.2));
+      font-size: 14px;
+    }
+    .agent-row strong { display:block; font-size:13px; }
+    .agent-row small { color: var(--muted); }
+    .agent-row .metric { color: var(--green); font-weight: 900; font-size: 12px; }
+
+    .section-title {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin: 28px 0 16px;
+    }
+    .section-title h3 { margin: 0; font-size: 25px; letter-spacing: -0.04em; }
+    .section-title p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .grid-main { display: grid; grid-template-columns: minmax(0, 1.35fr) 420px; gap: 16px; }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      background: var(--panel);
+      backdrop-filter: blur(24px);
+      box-shadow: 0 18px 60px rgba(0,0,0,.22);
+      overflow: hidden;
+    }
+
+    .card.pad { padding: 20px; }
+    .card-head {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .card-head h4 { margin: 0; font-size: 15px; letter-spacing: -0.02em; }
+    .card-head span { color: var(--muted); font-size: 12px; }
+
+    .kpi {
+      padding: 20px;
+      position: relative;
+      min-height: 154px;
+    }
+    .kpi::after {
+      content: "";
+      position: absolute;
+      inset: auto 18px 18px auto;
+      width: 86px;
+      height: 86px;
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(76,141,255,.18), rgba(66,232,255,.035));
+      transform: rotate(12deg);
+    }
+    .kpi small { display: block; color: var(--muted); font-weight: 750; }
+    .kpi strong {
+      display: block;
+      margin-top: 14px;
+      font-size: 34px;
+      letter-spacing: -0.06em;
+    }
+    .kpi .trend { margin-top: 12px; color: var(--green); font-size: 12px; font-weight: 850; }
+    .kpi .trend.warn { color: var(--yellow); }
+    .kpi .trend.bad { color: var(--red); }
+
+    .chart {
+      height: 260px;
+      padding: 16px 18px 18px;
+      position: relative;
+    }
+    .chart svg { width: 100%; height: 100%; display: block; }
+    .chart-grid line { stroke: rgba(255,255,255,.07); stroke-width: 1; }
+
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      text-align: left;
+      font-size: 13px;
+    }
+    .table th { color: var(--subtle); text-transform: uppercase; letter-spacing: .08em; font-size: 11px; }
+    .table td { color: #d7e0f4; }
+    .table tr:hover td { background: rgba(255,255,255,.035); }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 850;
+      background: rgba(76, 141, 255, .12);
+      color: #b8d0ff;
+      border: 1px solid rgba(76, 141, 255, .2);
+      white-space: nowrap;
+    }
+    .tag.green { background: rgba(79, 240, 162, .11); color: #aaffd4; border-color: rgba(79, 240, 162, .22); }
+    .tag.yellow { background: rgba(255, 209, 102, .12); color: #ffe09b; border-color: rgba(255, 209, 102, .22); }
+    .tag.red { background: rgba(255, 92, 124, .13); color: #ffb3c2; border-color: rgba(255, 92, 124, .22); }
+    .tag.purple { background: rgba(169, 139, 255, .13); color: #d6c9ff; border-color: rgba(169, 139, 255, .24); }
+
+    .timeline { padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+    .time-item { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 12px; }
+    .time-dot { width: 11px; height: 11px; margin-top: 5px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 20px rgba(66,232,255,.6); }
+    .time-item:not(:last-child) .time-dot::after { content: ""; display:block; width:1px; height:48px; margin-left:5px; margin-top:11px; background: rgba(255,255,255,.1); }
+    .time-copy strong { font-size: 13px; }
+    .time-copy p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .command-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 16px;
+    }
+    .prompt-box {
+      min-height: 132px;
+      border: 1px solid rgba(66, 232, 255, .18);
+      border-radius: 24px;
+      padding: 16px;
+      background: rgba(0,0,0,.18);
+    }
+    .prompt-box textarea {
+      width: 100%;
+      min-height: 76px;
+      resize: vertical;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      font: 14px/1.7 var(--font);
+    }
+
+    .wizard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+    .choice {
+      padding: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.042);
+      border-radius: 18px;
+    }
+    .choice strong { display:block; font-size:13px; margin-bottom:6px; }
+    .choice small { color:var(--muted); line-height:1.5; }
+
+    .approval-card {
+      border: 1px solid rgba(255, 209, 102, .22);
+      background:
+        radial-gradient(circle at 100% 0, rgba(255,209,102,.14), transparent 42%),
+        rgba(255, 255, 255, 0.05);
+      border-radius: 28px;
+      padding: 20px;
+    }
+    .approval-card h4 { margin: 0 0 14px; font-size: 18px; }
+    .approval-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 16px 0; }
+    .approval-metric { padding: 12px; border-radius: 16px; background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.07); }
+    .approval-metric small { color: var(--muted); display:block; margin-bottom:5px; }
+    .approval-metric strong { font-size: 18px; }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .gauge {
+      --p: 74;
+      width: 136px;
+      height: 136px;
+      border-radius: 50%;
+      background:
+        conic-gradient(var(--green) calc(var(--p) * 1%), rgba(255,255,255,.09) 0);
+      display: grid;
+      place-items: center;
+      margin: 6px auto 14px;
+      box-shadow: 0 22px 58px rgba(79,240,162,.12);
+    }
+    .gauge::before {
+      content: attr(data-label);
+      width: 96px;
+      height: 96px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #11182e;
+      font-weight: 950;
+      font-size: 24px;
+      letter-spacing: -0.04em;
+    }
+
+    .feature-list { display: grid; gap: 10px; }
+    .feature {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255,255,255,.043);
+      border: 1px solid rgba(255,255,255,.07);
+    }
+    .feature strong { font-size: 13px; }
+    .feature p { margin: 5px 0 0; color: var(--muted); line-height: 1.5; font-size: 12px; }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 7px;
+      padding: 18px;
+    }
+    .matrix div {
+      aspect-ratio: 1;
+      border-radius: 10px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.06);
+      display: grid;
+      place-items: center;
+      color: rgba(255,255,255,.32);
+      font-size: 10px;
+    }
+    .matrix .hot { background: rgba(255, 92, 124, .25); color: #ffc0cb; }
+    .matrix .mid { background: rgba(255, 209, 102, .18); color: #ffe3a0; }
+    .matrix .cool { background: rgba(79, 240, 162, .16); color: #a8ffd5; }
+
+    .kanban { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .lane { border: 1px solid var(--line); border-radius: 24px; background: rgba(255,255,255,.035); padding: 14px; min-height: 340px; }
+    .lane h4 { margin: 0 0 12px; font-size: 14px; color: #d7e4ff; }
+    .ticket { padding: 14px; border-radius: 18px; background: rgba(0,0,0,.2); border: 1px solid rgba(255,255,255,.08); margin-bottom: 10px; }
+    .ticket strong { font-size: 13px; }
+    .ticket p { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 7px 0 10px; }
+
+
+
+    .factor-bars { display: grid; gap: 12px; }
+    .factor-row {
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr) 58px;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.065);
+    }
+    .factor-row strong { font-size: 12px; color: #dbe6ff; }
+    .factor-track {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      overflow: hidden;
+    }
+    .factor-fill {
+      display: block;
+      height: 100%;
+      width: var(--w, 50%);
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+    }
+    .factor-fill.negative { background: linear-gradient(90deg, var(--orange), var(--red)); }
+    .factor-row em { font-style: normal; font-size: 12px; font-weight: 850; color: #dfe8ff; text-align: right; }
+
+    .lineage-flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .lineage-step {
+      min-height: 118px;
+      padding: 13px;
+      border: 1px solid rgba(66, 232, 255, .14);
+      border-radius: 18px;
+      background: rgba(255,255,255,.04);
+      position: relative;
+    }
+    .lineage-step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -12px;
+      top: 42px;
+      color: var(--cyan);
+      font-weight: 900;
+      opacity: .72;
+      z-index: 2;
+    }
+    .lineage-step b { display:block; font-size: 12px; margin-bottom: 7px; color: #eff6ff; }
+    .lineage-step small { display:block; color: var(--muted); line-height: 1.45; }
+
+    .scenario-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+    .scenario-card {
+      padding: 16px;
+      border-radius: 22px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.043);
+    }
+    .scenario-card strong { display:block; font-size: 13px; margin-bottom: 8px; }
+    .scenario-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .diff-row {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr .9fr 1fr;
+      gap: 10px;
+      padding: 13px 0;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      align-items: center;
+    }
+    .diff-row:last-child { border-bottom: 0; }
+    .diff-row small { color: var(--muted); }
+    .diff-row strong { font-size: 13px; }
+
+    @media (max-width: 1220px) {
+      .lineage-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .lineage-step:not(:last-child)::after { display: none; }
+      .scenario-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      z-index: 100;
+      background: rgba(0,0,0,.62);
+      backdrop-filter: blur(16px);
+      padding: 24px;
+    }
+    .modal-backdrop.show { display: grid; }
+    .modal {
+      width: min(780px, 100%);
+      border-radius: 34px;
+      border: 1px solid rgba(255,255,255,.14);
+      background:
+        radial-gradient(circle at 100% 0, rgba(76,141,255,.18), transparent 40%),
+        #10172d;
+      box-shadow: 0 40px 120px rgba(0,0,0,.6);
+      overflow: hidden;
+    }
+    .modal .modal-body { padding: 24px; }
+    .modal h3 { margin: 0; font-size: 28px; letter-spacing: -0.05em; }
+    .modal p { color: var(--muted); line-height: 1.7; }
+    .modal-actions { display:flex; gap:10px; justify-content:flex-end; padding: 18px 24px; border-top:1px solid var(--line); background: rgba(0,0,0,.16); }
+
+    .mobile-tabs { display: none; }
+
+    @media (max-width: 1220px) {
+      .app { grid-template-columns: 92px minmax(0,1fr); }
+      .brand h1, .nav button span:not(.nav-ico), .nav-section-title, .side-card { display: none; }
+      .brand { justify-content:center; padding-left: 0; padding-right: 0; }
+      .nav button { justify-content:center; }
+      .hero-inner, .grid-main, .command-panel { grid-template-columns: 1fr; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 860px) {
+      .app { display: block; }
+      .sidebar { display: none; }
+      main { padding: 16px 14px 96px; }
+      .topbar { align-items: stretch; flex-direction: column; }
+      .top-actions { overflow-x: auto; padding-bottom: 4px; }
+      .hero { padding: 22px; border-radius: 26px; }
+      .grid-4, .grid-3, .grid-2, .split, .wizard-grid, .kanban, .scenario-grid, .lineage-flow { grid-template-columns: 1fr; }
+      .mobile-tabs {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: 12px;
+        z-index: 80;
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+        padding: 8px;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(8, 11, 22, .86);
+        backdrop-filter: blur(22px);
+      }
+      .mobile-tabs button { border:0; border-radius:16px; background:transparent; color:var(--muted); padding:10px 6px; }
+      .mobile-tabs button.active { background:rgba(76,141,255,.18); color:white; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <h1>QuantOS AI</h1>
+          <span>Agentic Trading Platform</span>
+        </div>
+      </div>
+
+      <div class="nav-section-title">Command</div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-btn active" data-target="dashboard"><span class="nav-ico">⌘</span><span>AI 指挥中心</span></button>
+        <button class="nav-btn" data-target="strategy"><span class="nav-ico">◇</span><span>策略工厂</span></button>
+        <button class="nav-btn" data-target="backtest"><span class="nav-ico">↯</span><span>回测实验室</span></button>
+        <button class="nav-btn" data-target="explain"><span class="nav-ico">析</span><span>解释与血缘</span></button>
+        <button class="nav-btn" data-target="portfolio"><span class="nav-ico">◌</span><span>组合驾驶舱</span></button>
+        <button class="nav-btn" data-target="execution"><span class="nav-ico">⇄</span><span>交易审批</span></button>
+      </nav>
+
+      <div class="nav-section-title">Control</div>
+      <nav class="nav" aria-label="控制导航">
+        <button class="nav-btn" data-target="risk"><span class="nav-ico">盾</span><span>风控与熔断</span></button>
+        <button class="nav-btn" data-target="data"><span class="nav-ico">源</span><span>行情与合规</span></button>
+        <button class="nav-btn" data-target="security"><span class="nav-ico">钥</span><span>资金安全</span></button>
+        <button class="nav-btn" data-target="collaboration"><span class="nav-ico">协</span><span>协作实验室</span></button>
+        <button class="nav-btn" data-target="audit"><span class="nav-ico">迹</span><span>审计追踪</span></button>
+      </nav>
+
+      <div class="side-card">
+        <div class="label">System Health</div>
+        <div class="score"><strong>98.7</strong><span>LIVE</span></div>
+        <div class="mini-bars" aria-hidden="true">
+          <i style="height:22px"></i><i style="height:35px"></i><i style="height:30px"></i><i style="height:44px"></i><i style="height:28px"></i><i style="height:48px"></i><i style="height:40px"></i><i style="height:37px"></i><i style="height:45px"></i><i style="height:31px"></i><i style="height:42px"></i><i style="height:47px"></i>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div class="search">
+          <span>⌕</span>
+          <input id="aiPrompt" placeholder="告诉 AI：例如‘生成一个 BTC/ETH 激进趋势策略，最大回撤 20%，自动完成回测和模拟盘部署’" />
+        </div>
+        <div class="top-actions">
+          <span class="pill"><span class="dot"></span> AI Autopilot ON</span>
+          <span class="pill">Risk Gate A-</span>
+          <button class="btn secondary" onclick="openModal('global')">全局概览</button>
+          <button class="btn danger" onclick="openModal('kill')">Kill Switch</button>
+        </div>
+      </header>
+
+      <section id="dashboard" class="screen active">
+        <div class="hero">
+          <div class="hero-inner">
+            <div>
+              <span class="eyebrow">AI-First Quant Operating System</span>
+              <h2><span class="gradient-text">AI 作为主力，</span><br/>人类只审批关键交易。</h2>
+              <p>面向交易员、投资者与风控团队的一体化量化平台。Agent 自动完成策略研究、行情接入、回测验证、模拟盘部署、组合优化、实盘交易草案、解释血缘、风控约束与审计追踪；人类仅在交易、资金、风控放宽或不确定性场景中介入。</p>
+              <div class="hero-actions">
+                <button class="btn" onclick="openModal('create')">启动 AI 策略任务</button>
+                <button class="btn secondary" onclick="switchScreen('execution')">查看待审批交易</button>
+                <button class="btn secondary" onclick="switchScreen('audit')">查看 Agent 决策轨迹</button>
+              </div>
+            </div>
+            <div class="ai-card">
+              <div class="ai-card-head">
+                <div class="ai-card-title">Live Agent Swarm</div>
+                <span class="status-chip">7 Agents Active</span>
+              </div>
+              <div class="agent-stack">
+                <div class="agent-row"><div class="agent-avatar">研</div><div><strong>Research Agent</strong><small>正在扫描 BTC/ETH/SOL 市场结构</small></div><div class="metric">97%</div></div>
+                <div class="agent-row"><div class="agent-avatar">策</div><div><strong>Strategy Agent</strong><small>生成 ATR 趋势突破 v19 草案</small></div><div class="metric">84%</div></div>
+                <div class="agent-row"><div class="agent-avatar">测</div><div><strong>Backtest Agent</strong><small>样本外验证 2024-2026 数据</small></div><div class="metric">RUN</div></div>
+                <div class="agent-row"><div class="agent-avatar">险</div><div><strong>Risk Agent</strong><small>拦截 1 个高杠杆调仓提案</small></div><div class="metric">A-</div></div>
+                <div class="agent-row"><div class="agent-avatar">执</div><div><strong>Execution Agent</strong><small>等待 3 个实盘订单确认</small></div><div class="metric">3</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-title">
+          <div><h3>AI 驱动运营总览</h3><p>从策略生成到实盘审批，所有流程性任务由 Agent 自动完成。</p></div>
+          <button class="btn secondary" onclick="openModal('autopilot')">配置 Autopilot</button>
+        </div>
+        <div class="grid-4">
+          <div class="card kpi"><small>Active Strategies</small><strong>42</strong><div class="trend">+8 本周新增</div></div>
+          <div class="card kpi"><small>Agent Tasks</small><strong>318</strong><div class="trend">91% 自动闭环</div></div>
+          <div class="card kpi"><small>Pending Approvals</small><strong>7</strong><div class="trend warn">3 个实盘订单</div></div>
+          <div class="card kpi"><small>Capital Risk</small><strong>A-</strong><div class="trend">风控稳定</div></div>
+        </div>
+
+        <div class="section-title">
+          <div><h3>实时资金曲线与 Agent 事件</h3><p>策略收益、回撤、审批、风控、执行事件统一展示。</p></div>
+        </div>
+        <div class="grid-main">
+          <div class="card">
+            <div class="card-head"><h4>Portfolio Equity Curve</h4><span>AI managed · paper + live</span></div>
+            <div class="chart">
+              <svg viewBox="0 0 900 300" preserveAspectRatio="none" aria-label="资金曲线图">
+                <g class="chart-grid">
+                  <line x1="0" y1="50" x2="900" y2="50"/><line x1="0" y1="110" x2="900" y2="110"/><line x1="0" y1="170" x2="900" y2="170"/><line x1="0" y1="230" x2="900" y2="230"/>
+                </g>
+                <path d="M0,230 C70,215 105,220 150,198 C210,166 242,180 300,148 C360,114 398,138 450,110 C520,74 565,92 620,62 C680,35 742,60 790,40 C836,22 868,30 900,18" fill="none" stroke="url(#lineA)" stroke-width="5" stroke-linecap="round"/>
+                <path d="M0,230 C70,215 105,220 150,198 C210,166 242,180 300,148 C360,114 398,138 450,110 C520,74 565,92 620,62 C680,35 742,60 790,40 C836,22 868,30 900,18 L900,300 L0,300 Z" fill="url(#areaA)" opacity=".9"/>
+                <defs>
+                  <linearGradient id="lineA" x1="0" x2="1"><stop offset="0" stop-color="#4c8dff"/><stop offset=".5" stop-color="#42e8ff"/><stop offset="1" stop-color="#4ff0a2"/></linearGradient>
+                  <linearGradient id="areaA" y1="0" y2="1"><stop offset="0" stop-color="#42e8ff" stop-opacity=".25"/><stop offset="1" stop-color="#42e8ff" stop-opacity="0"/></linearGradient>
+                </defs>
+              </svg>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h4>Agent Timeline</h4><span>最近 18 分钟</span></div>
+            <div class="timeline">
+              <div class="time-item"><div class="time-dot"></div><div class="time-copy"><strong>Risk Agent 拒绝扩大 ETH 仓位</strong><p>原因：样本外收益低于样本内 57%，未达到自动升级阈值。</p></div></div>
+              <div class="time-item"><div class="time-dot"></div><div class="time-copy"><strong>Backtest Agent 完成 64 组参数搜索</strong><p>ATR 趋势突破 v19 在滑点敏感测试中表现稳定。</p></div></div>
+              <div class="time-item"><div class="time-dot"></div><div class="time-copy"><strong>Execution Agent 生成交易草案</strong><p>建议 BTC 加仓 2%，ETH 减仓 5%，等待确认。</p></div></div>
+              <div class="time-item"><div class="time-dot"></div><div class="time-copy"><strong>Data Agent 切换备用行情源</strong><p>主源延迟超过 2200ms，已切换至备用 WebSocket。</p></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="strategy" class="screen">
+        <div class="section-title">
+          <div><h3>策略工厂</h3><p>Agent 从自然语言目标生成候选策略、代码、参数空间、风控约束和部署计划。</p></div>
+          <button class="btn" onclick="openModal('create')">新建 AI 策略</button>
+        </div>
+        <div class="card pad command-panel">
+          <div>
+            <span class="eyebrow">Natural Language Strategy Builder</span>
+            <h2 style="font-size:42px;margin-bottom:12px">一句话生成可回测策略</h2>
+            <div class="prompt-box">
+              <textarea>创建一个偏激进的 BTC/ETH 趋势策略，目标年化 30%，最大回撤不超过 20%，先跑过去 3 年数据，自动做样本外验证和模拟盘部署计划。</textarea>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px"><button class="btn secondary">保存为模板</button><button class="btn">让 Agent 开始</button></div>
+            </div>
+            <div class="wizard-grid">
+              <div class="choice"><strong>风险偏好</strong><small>保守 / 平衡 / 激进 / 自定义资金约束</small></div>
+              <div class="choice"><strong>市场范围</strong><small>A 股、ETF、加密货币、期货、跨市场</small></div>
+              <div class="choice"><strong>策略族群</strong><small>趋势、均值回归、网格、多因子、套利</small></div>
+            </div>
+          </div>
+          <div class="approval-card">
+            <h4>AI 生成结果预览</h4>
+            <p style="color:var(--muted);line-height:1.7">Strategy Agent 已生成 5 个候选版本，其中 2 个通过静态安全检查，1 个通过样本外风控门槛。</p>
+            <div class="approval-grid">
+              <div class="approval-metric"><small>Best Candidate</small><strong>ATR-v19</strong></div>
+              <div class="approval-metric"><small>Risk Score</small><strong>A-</strong></div>
+              <div class="approval-metric"><small>Max DD</small><strong>16.8%</strong></div>
+              <div class="approval-metric"><small>Confidence</small><strong>0.84</strong></div>
+            </div>
+            <button class="btn success" style="width:100%" onclick="switchScreen('backtest')">查看回测结果</button>
+          </div>
+        </div>
+
+        <div class="section-title"><div><h3>策略版本流水线</h3><p>从草稿、静态检查、回测、模拟盘、实盘候选到归档，全程可追溯。</p></div></div>
+        <div class="kanban">
+          <div class="lane"><h4>Draft</h4><div class="ticket"><strong>MACD-Vol-v04</strong><p>AI 生成，等待静态检查。</p><span class="tag purple">Strategy Agent</span></div><div class="ticket"><strong>Grid-Neutral-v11</strong><p>参数空间过大，建议收敛。</p><span class="tag yellow">Needs Review</span></div></div>
+          <div class="lane"><h4>Backtesting</h4><div class="ticket"><strong>ATR-Trend-v19</strong><p>64 组参数，进行滑点敏感性测试。</p><span class="tag green">Running</span></div><div class="ticket"><strong>Donchian-v07</strong><p>样本外验证中。</p><span class="tag">Walk Forward</span></div></div>
+          <div class="lane"><h4>Paper Trading</h4><div class="ticket"><strong>BTC-MA-v12</strong><p>模拟盘运行 21 天，等待实盘候选评估。</p><span class="tag green">Stable</span></div><div class="ticket"><strong>ETH-RSI-v05</strong><p>最近 7 日表现下降，AI 正在生成 v06。</p><span class="tag yellow">Degrading</span></div></div>
+          <div class="lane"><h4>Live Candidate</h4><div class="ticket"><strong>ATR-Trend-v18</strong><p>风险评分 A-，等待交易员确认小额实盘。</p><span class="tag red">Approval</span></div></div>
+        </div>
+      </section>
+
+      <section id="backtest" class="screen">
+        <div class="section-title">
+          <div><h3>回测实验室</h3><p>AI 自动完成样本内、样本外、Walk-forward、Scenario Analysis、手续费/滑点敏感性分析。</p></div>
+          <button class="btn">启动批量回测</button>
+        </div>
+        <div class="grid-4">
+          <div class="card kpi"><small>Best Annualized</small><strong>31.8%</strong><div class="trend">样本外 24.6%</div></div>
+          <div class="card kpi"><small>Max Drawdown</small><strong>16.8%</strong><div class="trend warn">低于 20% 约束</div></div>
+          <div class="card kpi"><small>Sharpe</small><strong>1.74</strong><div class="trend">稳定</div></div>
+          <div class="card kpi"><small>Overfit Risk</small><strong>中</strong><div class="trend warn">需模拟盘验证</div></div>
+        </div>
+        <div class="grid-main" style="margin-top:16px">
+          <div class="card">
+            <div class="card-head"><h4>Backtest Comparison</h4><span>AI selected top 5 candidates</span></div>
+            <table class="table">
+              <thead><tr><th>策略</th><th>年化</th><th>最大回撤</th><th>样本外</th><th>过拟合</th><th>动作</th></tr></thead>
+              <tbody>
+                <tr><td>ATR-Trend-v19</td><td>31.8%</td><td>16.8%</td><td><span class="tag green">通过</span></td><td>中</td><td><button class="btn secondary">报告</button></td></tr>
+                <tr><td>Donchian-v07</td><td>28.1%</td><td>18.4%</td><td><span class="tag green">通过</span></td><td>低</td><td><button class="btn secondary">报告</button></td></tr>
+                <tr><td>MACD-Vol-v04</td><td>42.7%</td><td>34.2%</td><td><span class="tag red">失败</span></td><td>高</td><td><button class="btn secondary">解释</button></td></tr>
+                <tr><td>Grid-Neutral-v11</td><td>19.3%</td><td>12.1%</td><td><span class="tag yellow">待观察</span></td><td>中</td><td><button class="btn secondary">报告</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card pad">
+            <div class="gauge" style="--p:84" data-label="84%"></div>
+            <h4 style="margin:0;text-align:center">AI 回测可信度</h4>
+            <p style="text-align:center;color:var(--muted);line-height:1.7">数据质量、样本外稳定性、参数敏感性、交易成本压力测试综合评分。</p>
+            <div class="feature-list">
+              <div class="feature"><div><strong>样本外收益 / 样本内收益</strong><p>77.3%，超过 60% 准入线。</p></div><span class="tag green">PASS</span></div>
+              <div class="feature"><div><strong>滑点敏感性</strong><p>滑点增加 2 倍后收益下降 8.4%。</p></div><span class="tag yellow">WATCH</span></div>
+              <div class="feature"><div><strong>Scenario Analysis</strong><p>流动性枯竭、黑天鹅跳空、交易所故障、延迟冲击均有分场景结果。</p></div><span class="tag green">PASS</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+        <div class="section-title"><div><h3>Scenario Analysis 极端场景压力测试</h3><p>不只看收益指标，而是验证策略在黑天鹅、流动性和基础设施异常下的可执行性。</p></div></div>
+        <div class="card">
+          <div class="card-head"><h4>Stress Scenario Result</h4><span>ATR-Trend-v19 · portfolio impact</span></div>
+          <table class="table">
+            <thead><tr><th>场景</th><th>组合损失</th><th>最大回撤</th><th>熔断结果</th><th>AI 建议动作</th><th>人工确认</th></tr></thead>
+            <tbody>
+              <tr><td>Liquidity Crisis</td><td>-3.8%</td><td>14.2%</td><td><span class="tag yellow">只允许减仓</span></td><td>降低挂单深度，分批退出</td><td>需要</td></tr>
+              <tr><td>Black Swan Gap</td><td>-5.6%</td><td>18.9%</td><td><span class="tag red">触发组合熔断</span></td><td>暂停新开仓，保留止损</td><td>需要</td></tr>
+              <tr><td>Exchange Outage</td><td>-1.1%</td><td>10.1%</td><td><span class="tag yellow">切换备用执行</span></td><td>撤销未成交订单</td><td>不需要</td></tr>
+              <tr><td>Correlation Spike</td><td>-2.9%</td><td>15.4%</td><td><span class="tag yellow">收缩风险预算</span></td><td>降低 ETH/SOL 联动暴露</td><td>需要</td></tr>
+              <tr><td>Latency Shock</td><td>-0.7%</td><td>9.8%</td><td><span class="tag green">未触发</span></td><td>扩大限价保护，不追价</td><td>不需要</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+
+      <section id="explain" class="screen">
+        <div class="section-title">
+          <div><h3>解释与血缘</h3><p>把 AI 的交易建议拆成信号贡献、规则命中、数据来源、偏差检查与可复现链路。</p></div>
+          <button class="btn secondary">导出解释报告</button>
+        </div>
+        <div class="grid-main">
+          <div class="card pad">
+            <span class="eyebrow">Signal Attribution</span>
+            <h2 style="font-size:38px;margin-bottom:12px">BTC/USDT 买入信号拆解</h2>
+            <p style="color:var(--muted);line-height:1.7;margin-top:0">本次建议不是直接给出“买入”，而是展示各因子对信号的正负贡献，便于交易员判断是否接受小仓位试探。</p>
+            <div class="factor-bars">
+              <div class="factor-row"><strong>趋势强度</strong><div class="factor-track"><span class="factor-fill" style="--w:84%"></span></div><em>+0.42</em></div>
+              <div class="factor-row"><strong>波动率过滤</strong><div class="factor-track"><span class="factor-fill" style="--w:62%"></span></div><em>+0.31</em></div>
+              <div class="factor-row"><strong>成交量确认</strong><div class="factor-track"><span class="factor-fill" style="--w:36%"></span></div><em>+0.18</em></div>
+              <div class="factor-row"><strong>资金费率风险</strong><div class="factor-track"><span class="factor-fill negative" style="--w:24%"></span></div><em>-0.12</em></div>
+              <div class="factor-row"><strong>流动性惩罚</strong><div class="factor-track"><span class="factor-fill negative" style="--w:16%"></span></div><em>-0.08</em></div>
+            </div>
+          </div>
+          <div class="card pad">
+            <div class="gauge" style="--p:84" data-label="0.84"></div>
+            <h4 style="margin:0;text-align:center">AI Confidence Breakdown</h4>
+            <p style="text-align:center;color:var(--muted);line-height:1.7">置信度来自数据质量、样本外稳定性、执行可行性和风险约束，而不是单一模型分数。</p>
+            <div class="feature-list">
+              <div class="feature"><div><strong>数据质量</strong><p>主源与备用源价差 0.04%，缺失率 0.02%。</p></div><span class="tag green">0.92</span></div>
+              <div class="feature"><div><strong>历史相似场景</strong><p>过去 27 次相似突破中，17 次在 10 日内盈利。</p></div><span class="tag yellow">0.71</span></div>
+              <div class="feature"><div><strong>执行可行性</strong><p>订单占 5 档盘口深度 3.6%，建议拆单执行。</p></div><span class="tag green">0.86</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card pad">
+            <h4>Trade Rationale 交易理由链</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>信号触发</strong><p>4H 收盘价突破 Donchian 上轨，ATR 波动率仍在可交易区间。</p></div><span class="tag green">Hit</span></div>
+              <div class="feature"><div><strong>风险约束</strong><p>单策略仓位不超过 2%，组合回撤预算仍有 5.6% 缓冲。</p></div><span class="tag green">Safe</span></div>
+              <div class="feature"><div><strong>负面因素</strong><p>资金费率偏高、盘口深度下降，因此不建议一次性重仓。</p></div><span class="tag yellow">Limit</span></div>
+              <div class="feature"><div><strong>最终动作</strong><p>Execution Agent 只生成 2% 小仓位订单草案，进入人工审批。</p></div><span class="tag yellow">Approval</span></div>
+            </div>
+          </div>
+          <div class="card pad">
+            <h4>解释方式适配</h4>
+            <table class="table">
+              <thead><tr><th>策略类型</th><th>解释方式</th><th>输出</th></tr></thead>
+              <tbody>
+                <tr><td>规则策略</td><td>规则命中链路</td><td>触发条件、阈值、止损规则</td></tr>
+                <tr><td>多因子策略</td><td>因子贡献 / 暴露</td><td>正负贡献、行业/风格暴露</td></tr>
+                <tr><td>机器学习策略</td><td>Feature Importance / SHAP</td><td>特征重要性、样本级解释</td></tr>
+                <tr><td>组合策略</td><td>风险贡献</td><td>相关性、风险预算、边际 VaR</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section-title"><div><h3>Data Lineage 数据血缘链路</h3><p>从原始数据到订单草案，展示数据版本、许可范围、Hash 与偏差检查。</p></div></div>
+        <div class="card pad">
+          <div class="lineage-flow">
+            <div class="lineage-step"><b>Raw Data</b><small>Binance Public<br/>版本：2026-05-08<br/>Hash: 8fa2</small></div>
+            <div class="lineage-step"><b>Cleaning</b><small>去重 / 缺失填充<br/>异常 K 线 3 条<br/>可复现</small></div>
+            <div class="lineage-step"><b>Feature Store</b><small>ATR / Donchian / Volume<br/>因子版本 f-219<br/>只读</small></div>
+            <div class="lineage-step"><b>Bias Check</b><small>未来函数：通过<br/>幸存者偏差：通过<br/>泄漏：通过</small></div>
+            <div class="lineage-step"><b>Backtest</b><small>Walk-forward<br/>成本模型 c-07<br/>样本外通过</small></div>
+            <div class="lineage-step"><b>Live Signal</b><small>主备源一致<br/>延迟 82ms<br/>许可：Paper/Live</small></div>
+            <div class="lineage-step"><b>Order Draft</b><small>BTC 2%<br/>需人工审批<br/>Trace ID: T-9042</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="portfolio" class="screen">
+        <div class="section-title">
+          <div><h3>组合驾驶舱</h3><p>Portfolio Agent 自动进行资金分配、相关性控制、风险预算与调仓建议。</p></div>
+          <button class="btn">生成组合优化方案</button>
+        </div>
+        <div class="grid-3">
+          <div class="card pad"><div class="gauge" style="--p:72" data-label="72%"></div><h4>风险预算使用率</h4><p style="color:var(--muted)">距离组合最大回撤预算仍有缓冲。</p></div>
+          <div class="card pad"><div class="gauge" style="--p:58" data-label="58%"></div><h4>AI 自动化比例</h4><p style="color:var(--muted)">流程性任务由 Agent 处理，交易仍需审批。</p></div>
+          <div class="card pad"><div class="gauge" style="--p:89" data-label="89%"></div><h4>策略分散度</h4><p style="color:var(--muted)">多策略相关性处于安全区间。</p></div>
+        </div>
+        <div class="split" style="margin-top:16px">
+          <div class="card">
+            <div class="card-head"><h4>Strategy Allocation</h4><span>AI proposed</span></div>
+            <table class="table">
+              <thead><tr><th>策略</th><th>权重</th><th>风险</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr><td>BTC ATR Trend</td><td>35%</td><td>A-</td><td><span class="tag green">Live</span></td></tr>
+                <tr><td>ETH Donchian</td><td>20%</td><td>B+</td><td><span class="tag yellow">Paper</span></td></tr>
+                <tr><td>ETF Rotation</td><td>25%</td><td>A</td><td><span class="tag green">Live</span></td></tr>
+                <tr><td>Cash Buffer</td><td>20%</td><td>A+</td><td><span class="tag">Reserve</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-head"><h4>Correlation Heatmap</h4><span>Strategy x Strategy</span></div>
+            <div class="matrix">
+              <div class="cool">.12</div><div class="mid">.42</div><div class="cool">.21</div><div class="hot">.76</div><div class="cool">.09</div><div class="mid">.38</div><div class="cool">.18</div>
+              <div class="mid">.42</div><div class="cool">.14</div><div class="cool">.28</div><div class="mid">.47</div><div class="cool">.22</div><div class="hot">.81</div><div class="cool">.11</div>
+              <div class="cool">.21</div><div class="cool">.28</div><div class="cool">.06</div><div class="mid">.51</div><div class="cool">.17</div><div class="mid">.44</div><div class="cool">.25</div>
+              <div class="hot">.76</div><div class="mid">.47</div><div class="mid">.51</div><div class="cool">.13</div><div class="mid">.39</div><div class="cool">.27</div><div class="hot">.72</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="execution" class="screen">
+        <div class="section-title">
+          <div><h3>交易审批中心</h3><p>Execution Agent 生成订单草案，人类只确认交易、资金变更和不确定性动作。</p></div>
+          <button class="btn secondary">审批规则设置</button>
+        </div>
+        <div class="grid-3">
+          <div class="approval-card">
+            <span class="tag yellow">需要确认</span>
+            <h4 style="margin-top:12px">买入 BTC/USDT</h4>
+            <p>4H 趋势突破，ATR 波动率可接受，策略 v19 触发买入信号。</p>
+            <div class="approval-grid"><div class="approval-metric"><small>金额</small><strong>资金 2%</strong></div><div class="approval-metric"><small>限价</small><strong>卖一 +0.05%</strong></div><div class="approval-metric"><small>止损</small><strong>-4%</strong></div><div class="approval-metric"><small>评分</small><strong>A-</strong></div></div>
+            <div style="display:flex;gap:10px"><button class="btn success" onclick="openModal('approve')">批准</button><button class="btn secondary">拒绝</button></div>
+          </div>
+          <div class="approval-card">
+            <span class="tag yellow">需要确认</span>
+            <h4 style="margin-top:12px">卖出 ETH 20%</h4>
+            <p>Risk Agent 检测 ETH 策略近期回撤扩大，建议减仓控制组合暴露。</p>
+            <div class="approval-grid"><div class="approval-metric"><small>金额</small><strong>仓位 20%</strong></div><div class="approval-metric"><small>原因</small><strong>降风险</strong></div><div class="approval-metric"><small>影响</small><strong>DD -1.8%</strong></div><div class="approval-metric"><small>评分</small><strong>B+</strong></div></div>
+            <div style="display:flex;gap:10px"><button class="btn success" onclick="openModal('approve')">批准</button><button class="btn secondary">拒绝</button></div>
+          </div>
+          <div class="approval-card">
+            <span class="tag red">不确定性</span>
+            <h4 style="margin-top:12px">SOL 策略暂停</h4>
+            <p>行情源之间价格偏差超过阈值，AI 无法确认真实成交价格，建议暂停新开仓。</p>
+            <div class="approval-grid"><div class="approval-metric"><small>Confidence</small><strong>0.68</strong></div><div class="approval-metric"><small>数据质量</small><strong>82</strong></div><div class="approval-metric"><small>动作</small><strong>暂停</strong></div><div class="approval-metric"><small>级别</small><strong>P1</strong></div></div>
+            <div style="display:flex;gap:10px"><button class="btn danger" onclick="openModal('pause')">暂停</button><button class="btn secondary">转人工</button></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="risk" class="screen">
+        <div class="section-title">
+          <div><h3>风控与熔断</h3><p>Risk Agent 拥有一票否决权，Policy Engine 独立于 AI 决策。</p></div>
+          <button class="btn danger" onclick="openModal('kill')">全局熔断</button>
+        </div>
+        <div class="grid-4">
+          <div class="card kpi"><small>账户级单日亏损</small><strong>0.8%</strong><div class="trend">阈值 2%</div></div>
+          <div class="card kpi"><small>组合最大回撤</small><strong>9.4%</strong><div class="trend warn">预算 15%</div></div>
+          <div class="card kpi"><small>拒单次数</small><strong>13</strong><div class="trend">今日</div></div>
+          <div class="card kpi"><small>熔断状态</small><strong>正常</strong><div class="trend">未触发</div></div>
+        </div>
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card pad">
+            <h4>Policy Engine 决策链</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>AI 请求：提高 ETH 仓位至 40%</strong><p>拒绝：超过激进策略单品种仓位上限 30%。</p></div><span class="tag red">DENIED</span></div>
+              <div class="feature"><div><strong>AI 请求：运行 180 天回测</strong><p>允许：只读数据，不涉及实盘资金。</p></div><span class="tag green">ALLOWED</span></div>
+              <div class="feature"><div><strong>AI 请求：提交 BTC 小额订单</strong><p>需要人工确认：属于实盘交易动作。</p></div><span class="tag yellow">APPROVAL</span></div>
+            </div>
+          </div>
+          <div class="card pad">
+            <h4>熔断规则</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>可恢复熔断</strong><p>行情延迟、策略心跳异常、交易所短时超时。</p></div><span class="tag yellow">AUTO</span></div>
+              <div class="feature"><div><strong>不可恢复熔断</strong><p>资金异常、重复下单、风控服务不可用。</p></div><span class="tag red">MANUAL</span></div>
+              <div class="feature"><div><strong>恢复审批</strong><p>熔断恢复必须经过风控员确认，AI 只能提交恢复申请。</p></div><span class="tag purple">HITL</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="data" class="screen">
+        <div class="section-title">
+          <div><h3>行情与数据合规</h3><p>Data Agent 自动选择数据源、检查质量、记录使用范围、偏差风险和实盘许可边界。</p></div>
+          <button class="btn">新增数据源</button>
+        </div>
+        <div class="grid-3">
+          <div class="card pad"><h4>免费研究层</h4><p style="color:var(--muted)">AKShare / CCXT 公共数据，仅用于研究、学习、回测。</p><span class="tag green">Research Only</span></div>
+          <div class="card pad"><h4>模拟盘层</h4><p style="color:var(--muted)">交易所 WebSocket / 券商模拟行情，用于仿真验证。</p><span class="tag yellow">Paper</span></div>
+          <div class="card pad"><h4>实盘层</h4><p style="color:var(--muted)">授权行情 / 券商接口 / 交易所合规 API，用于真实交易。</p><span class="tag red">Licensed</span></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><h4>Data Quality Monitor</h4><span>Latency · Drift · Missing · Compliance</span></div>
+          <table class="table">
+            <thead><tr><th>数据源</th><th>用途</th><th>延迟</th><th>缺失率</th><th>偏差</th><th>合规状态</th></tr></thead>
+            <tbody>
+              <tr><td>CCXT Binance Public</td><td>Research / Paper</td><td>82ms</td><td>0.02%</td><td>0.04%</td><td><span class="tag green">OK</span></td></tr>
+              <tr><td>OKX WebSocket</td><td>Paper / Backup</td><td>110ms</td><td>0.01%</td><td>0.06%</td><td><span class="tag green">OK</span></td></tr>
+              <tr><td>AKShare A-share</td><td>Research</td><td>EOD</td><td>0.12%</td><td>-</td><td><span class="tag yellow">非实时</span></td></tr>
+              <tr><td>Broker Licensed Feed</td><td>Live</td><td>14ms</td><td>0.00%</td><td>0.01%</td><td><span class="tag green">Licensed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card pad">
+            <h4>Bias & License Gate</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>Survivorship Bias 幸存者偏差</strong><p>A 股研究数据必须包含退市标的和历史成分变更。</p></div><span class="tag green">PASS</span></div>
+              <div class="feature"><div><strong>Look-ahead Bias 未来函数</strong><p>特征只能使用信号生成时已经可见的数据时间戳。</p></div><span class="tag green">PASS</span></div>
+              <div class="feature"><div><strong>Feature Leakage 特征泄漏</strong><p>标签、成交结果、未来资金费率不得进入训练特征。</p></div><span class="tag yellow">WATCH</span></div>
+              <div class="feature"><div><strong>License Scope 数据许可</strong><p>Research Only 数据禁止进入实盘信号和订单草案。</p></div><span class="tag red">ENFORCED</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h4>Lineage Snapshot</h4><span>version · hash · live permission</span></div>
+            <table class="table">
+              <thead><tr><th>节点</th><th>版本</th><th>Hash</th><th>实盘允许</th></tr></thead>
+              <tbody>
+                <tr><td>Raw Tick</td><td>feed-20260508</td><td>8fa2</td><td><span class="tag green">允许</span></td></tr>
+                <tr><td>Cleaned Bar</td><td>bar-v44</td><td>51bc</td><td><span class="tag green">允许</span></td></tr>
+                <tr><td>Feature Set</td><td>factor-f219</td><td>c0a7</td><td><span class="tag green">允许</span></td></tr>
+                <tr><td>AKShare EOD</td><td>research-031</td><td>19de</td><td><span class="tag red">禁止</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="security" class="screen">
+        <div class="section-title">
+          <div><h3>资金安全</h3><p>AI 不接触密钥、不拥有资金权限，交易执行通过 Vault/KMS 与最小权限 API 完成。</p></div>
+          <button class="btn secondary">密钥轮换</button>
+        </div>
+        <div class="grid-4">
+          <div class="card kpi"><small>明文密钥暴露</small><strong>0</strong><div class="trend">Vault 托管</div></div>
+          <div class="card kpi"><small>提现权限</small><strong>关闭</strong><div class="trend">强制规则</div></div>
+          <div class="card kpi"><small>密钥轮换</small><strong>30d</strong><div class="trend">自动提醒</div></div>
+          <div class="card kpi"><small>资金账户</small><strong>隔离</strong><div class="trend">主/子账户</div></div>
+        </div>
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card pad">
+            <h4>Account Segmentation</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>主账户</strong><p>资金保管，不运行策略，不开放 AI 操作。</p></div><span class="tag green">Safe</span></div>
+              <div class="feature"><div><strong>小额实盘账户</strong><p>仅允许已审批策略运行，交易需确认或预授权。</p></div><span class="tag yellow">Controlled</span></div>
+              <div class="feature"><div><strong>实验账户</strong><p>AI 自动模拟盘、回测、策略验证，不动真钱。</p></div><span class="tag purple">Sandbox</span></div>
+            </div>
+          </div>
+          <div class="card pad">
+            <h4>AI 禁止能力</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>禁止读取 Secret</strong><p>Agent 无权查看、导出、解密 API Key。</p></div><span class="tag red">Blocked</span></div>
+              <div class="feature"><div><strong>禁止提现/划转</strong><p>交易系统不提供提现能力。</p></div><span class="tag red">Blocked</span></div>
+              <div class="feature"><div><strong>禁止关闭风控</strong><p>风控规则放宽必须双人审批。</p></div><span class="tag red">Blocked</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <section id="collaboration" class="screen">
+        <div class="section-title">
+          <div><h3>协作实验室</h3><p>面向研究员、交易员、风控员和合规人员的策略协作、版本 Diff、A/B Testing 与上线评审。</p></div>
+          <button class="btn">创建评审任务</button>
+        </div>
+        <div class="grid-4">
+          <div class="card kpi"><small>Research Threads</small><strong>18</strong><div class="trend">6 个活跃讨论</div></div>
+          <div class="card kpi"><small>Pending Reviews</small><strong>5</strong><div class="trend warn">2 个需风控补充</div></div>
+          <div class="card kpi"><small>A/B Tests</small><strong>3</strong><div class="trend">模拟盘运行中</div></div>
+          <div class="card kpi"><small>Role Gates</small><strong>启用</strong><div class="trend">研究 / 交易 / 风控分权</div></div>
+        </div>
+        <div class="grid-main" style="margin-top:16px">
+          <div class="card pad">
+            <div class="card-head" style="padding:0 0 14px;border-bottom:1px solid var(--line);margin-bottom:8px"><h4>Strategy Version Diff</h4><span>ATR-v18 → ATR-v19</span></div>
+            <div class="diff-row"><small>变更项</small><small>v18</small><small>v19</small><small>影响</small></div>
+            <div class="diff-row"><strong>ATR Window</strong><span>14</span><span>21</span><small>降低噪声交易</small></div>
+            <div class="diff-row"><strong>Stop Loss</strong><span>3.5%</span><span>4.0%</span><small>降低假突破止损</small></div>
+            <div class="diff-row"><strong>Turnover</strong><span>4.8x</span><span>4.2x</span><small>交易成本下降</small></div>
+            <div class="diff-row"><strong>Max Drawdown</strong><span>-18.2%</span><span>-14.6%</span><small>风险改善</small></div>
+          </div>
+          <div class="card pad">
+            <h4>Review Thread</h4>
+            <div class="feature-list">
+              <div class="feature"><div><strong>Researcher</strong><p>v19 在样本外表现更稳，建议继续模拟盘 14 天。</p></div><span class="tag green">支持</span></div>
+              <div class="feature"><div><strong>Risk Agent</strong><p>要求补充 2021-2022 类熊市场和流动性枯竭压测。</p></div><span class="tag yellow">补充</span></div>
+              <div class="feature"><div><strong>Trader</strong><p>同意进入模拟盘，不进入实盘候选。</p></div><span class="tag purple">Paper</span></div>
+              <div class="feature"><div><strong>Compliance</strong><p>当前数据许可允许研究和模拟盘，不允许使用 Research Only 源实盘。</p></div><span class="tag red">限制</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="grid-3" style="margin-top:16px">
+          <div class="card pad"><h4>Code Review</h4><p style="color:var(--muted);line-height:1.7">策略代码、参数空间、交易成本模型和数据依赖变更均需留下评审记录。</p><span class="tag yellow">Required</span></div>
+          <div class="card pad"><h4>A/B Testing</h4><p style="color:var(--muted);line-height:1.7">v18 与 v19 可在相同资金预算和行情源下运行模拟盘对照。</p><span class="tag green">Running</span></div>
+          <div class="card pad"><h4>Approval Flow</h4><p style="color:var(--muted);line-height:1.7">实盘候选必须经过研究、交易、风控三方确认，AI 只能提交建议。</p><span class="tag red">HITL</span></div>
+        </div>
+      </section>
+
+      <section id="audit" class="screen">
+        <div class="section-title">
+          <div><h3>审计追踪</h3><p>每次 Agent 计划、工具调用、风控判断、审批、交易执行均可追溯。</p></div>
+          <button class="btn">导出审计报告</button>
+        </div>
+        <div class="card">
+          <div class="card-head"><h4>Decision Trace</h4><span>Immutable audit log</span></div>
+          <table class="table">
+            <thead><tr><th>时间</th><th>Actor</th><th>动作</th><th>资源</th><th>结果</th><th>置信度</th></tr></thead>
+            <tbody>
+              <tr><td>09:42:18</td><td>Risk Agent</td><td>拒绝仓位提升</td><td>ETH-Trend-v18</td><td><span class="tag red">DENIED</span></td><td>0.91</td></tr>
+              <tr><td>09:38:02</td><td>Backtest Agent</td><td>运行样本外验证</td><td>ATR-v19</td><td><span class="tag green">PASS</span></td><td>0.84</td></tr>
+              <tr><td>09:36:11</td><td>Explainability Agent</td><td>生成信号归因</td><td>BTC Buy 2%</td><td><span class="tag green">TRACE</span></td><td>0.84</td></tr>
+              <tr><td>09:34:07</td><td>Data Agent</td><td>校验血缘 Hash</td><td>factor-f219</td><td><span class="tag green">VERIFIED</span></td><td>0.93</td></tr>
+              <tr><td>09:31:44</td><td>Data Agent</td><td>切换备用行情源</td><td>BTC/USDT</td><td><span class="tag green">AUTO</span></td><td>0.96</td></tr>
+              <tr><td>09:26:10</td><td>Execution Agent</td><td>创建订单草案</td><td>BTC Buy 2%</td><td><span class="tag yellow">APPROVAL</span></td><td>0.88</td></tr>
+              <tr><td>09:12:22</td><td>Human</td><td>批准小额实盘</td><td>BTC-MA-v12</td><td><span class="tag green">APPROVED</span></td><td>-</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid-2" style="margin-top:16px">
+          <div class="card pad"><h4>Agent Tool Registry</h4><p style="color:var(--muted)">所有工具均绑定允许 Agent、参数范围、审批要求、超时、频控和日志追踪。</p><div class="feature-list"><div class="feature"><div><strong>run_backtest</strong><p>允许 Backtest Agent，无需审批。</p></div><span class="tag green">L2</span></div><div class="feature"><div><strong>create_live_order_proposal</strong><p>允许 Execution Agent，需要人工审批。</p></div><span class="tag yellow">L4</span></div><div class="feature"><div><strong>submit_live_order</strong><p>默认禁止，除非预授权且风控评分 A。</p></div><span class="tag red">L5</span></div></div></div>
+          <div class="card pad"><h4>Human-in-the-loop Rules</h4><p style="color:var(--muted)">交易、资金扩容、风控放宽、不确定性、熔断恢复，必须进入人工确认。</p><div class="feature-list"><div class="feature"><div><strong>Confidence &lt; 0.8</strong><p>转人工复核。</p></div><span class="tag yellow">Review</span></div><div class="feature"><div><strong>Live Trade</strong><p>默认需要确认。</p></div><span class="tag red">Approval</span></div><div class="feature"><div><strong>Paper Trading</strong><p>AI 可自动执行。</p></div><span class="tag green">Auto</span></div></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="mobile-tabs">
+    <button class="nav-btn active" data-target="dashboard">⌘</button>
+    <button class="nav-btn" data-target="strategy">◇</button>
+    <button class="nav-btn" data-target="backtest">↯</button>
+    <button class="nav-btn" data-target="explain">析</button>
+    <button class="nav-btn" data-target="execution">⇄</button>
+    <button class="nav-btn" data-target="risk">盾</button>
+  </div>
+
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeModal()">关闭</button>
+        <button class="btn" id="modalPrimary" onclick="closeModal()">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const modalContent = {
+      global: {
+        title: '全局系统概览',
+        body: 'AI Autopilot 正常运行。当前 42 个策略版本、318 个 Agent 任务、7 个待审批动作。解释血缘、数据许可、实盘交易均受 Policy Engine、Risk Agent 与 Human Approval Center 约束。',
+        primary: '知道了'
+      },
+      kill: {
+        title: '全局 Kill Switch',
+        body: '触发后将立即暂停所有新开仓，仅允许减仓与撤单。不可恢复熔断恢复必须经过风控员审批。此原型仅展示交互，不会执行真实交易。',
+        primary: '模拟触发熔断'
+      },
+      create: {
+        title: '启动 AI 策略任务',
+        body: 'Command Center 将自动拆解任务：选择数据源、清洗数据、生成候选策略、静态安全检查、批量回测、样本外验证、风控评估、生成模拟盘部署计划。涉及实盘交易时会单独请求确认。',
+        primary: '启动任务'
+      },
+      autopilot: {
+        title: 'Autopilot 配置',
+        body: '建议默认开放 L0-L4 权限：读取、生成草稿、运行回测、模拟盘自动执行、生成实盘提案。L5 实盘自动执行默认关闭，只能通过预授权限额开启。',
+        primary: '保存配置'
+      },
+      approve: {
+        title: '交易审批确认',
+        body: '该订单已通过账户级、组合级、策略级三层风控。提交后 Execution Agent 将使用幂等键发送订单，并持续监控成交、部分成交、撤单和回报异常。',
+        primary: '批准执行'
+      },
+      pause: {
+        title: '暂停策略确认',
+        body: '由于行情源冲突和置信度不足，系统建议暂停 SOL 策略新开仓。该动作不涉及实盘买卖，仅冻结新信号并保留已有持仓处理规则。',
+        primary: '暂停策略'
+      }
+    };
+
+    function switchScreen(target) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      const screen = document.getElementById(target);
+      if (screen) screen.classList.add('active');
+      document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.target === target));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => switchScreen(btn.dataset.target));
+    });
+
+    function openModal(type) {
+      const data = modalContent[type] || modalContent.global;
+      document.getElementById('modalBody').innerHTML = `<h3>${data.title}</h3><p>${data.body}</p>`;
+      document.getElementById('modalPrimary').textContent = data.primary;
+      document.getElementById('modalBackdrop').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('modalBackdrop').classList.remove('show');
+    }
+
+    document.getElementById('modalBackdrop').addEventListener('click', (e) => {
+      if (e.target.id === 'modalBackdrop') closeModal();
+    });
+
+    document.getElementById('aiPrompt').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        openModal('create');
+      }
+    });
+  </script>
+</body>
+</html>
