@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 interface QuickActionsProps {
   onNavigate?: (target: string) => void
@@ -6,7 +6,8 @@ interface QuickActionsProps {
 }
 
 export default function QuickActions({ onNavigate, onModal }: QuickActionsProps) {
-  const pending = mock.dashboard.pendingApprovals
+  const data = useDashboard()
+  const pending = data.pendingApprovals
   return (
     <div className="quick-actions">
       <button

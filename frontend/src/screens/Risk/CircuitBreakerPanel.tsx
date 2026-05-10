@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 const STATUS_LABEL: Record<string, string> = {
   armed: 'ARMED',
@@ -19,7 +19,8 @@ interface PanelProps {
 }
 
 export default function CircuitBreakerPanel({ onModal }: PanelProps) {
-  const list = mock.risk.circuits
+  const data = useRisk()
+  const list = data.circuits
   const triggeredCount = list.filter((c) => c.status === 'triggered').length
 
   return (

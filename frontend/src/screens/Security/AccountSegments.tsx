@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 const ROLE_ICON: Record<string, string> = {
   custody: '◆',
@@ -9,7 +9,8 @@ const ROLE_ICON: Record<string, string> = {
 }
 
 export default function AccountSegments() {
-  const accounts = mock.security.accounts
+  const data = useSecurity()
+  const accounts = data.accounts
 
   return (
     <div className="security-accounts">

@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 const STATUS_LABEL: Record<string, string> = {
   pass: 'PASS',
@@ -15,7 +15,8 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 export default function BiasGate() {
-  const list = mock.data.biasGate
+  const data = useData()
+  const list = data.biasGate
   const watchCount = list.filter((b) => b.status === 'watch').length
   const failCount = list.filter((b) => b.status === 'fail').length
 

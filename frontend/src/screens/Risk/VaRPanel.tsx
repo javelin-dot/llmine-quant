@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 export default function VaRPanel() {
-  const v = mock.risk.var
+  const data = useRisk()
+  const v = data.var
   const W = 320
   const H = 96
   const padX = 8

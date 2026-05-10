@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '待评审',
@@ -14,7 +14,8 @@ const DECISION_ICON: Record<string, string> = {
 }
 
 export default function ActiveReviews() {
-  const list = mock.collaboration.activeReviews
+  const data = useCollaboration()
+  const list = data.activeReviews
 
   return (
     <div className="collab-reviews">

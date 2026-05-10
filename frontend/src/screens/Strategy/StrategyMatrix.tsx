@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { mock } from '../../data'
+import { useStrategy } from '../../contexts/StrategyContext'
 
 type SortKey = 'annualReturn' | 'maxDd' | 'sharpe' | 'oosScore' | 'name'
 type SortDir = 'asc' | 'desc'
@@ -51,12 +51,13 @@ interface StrategyMatrixProps {
 }
 
 export default function StrategyMatrix({ onNavigate }: StrategyMatrixProps) {
+  const data = useStrategy()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('annualReturn')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const rows = useMemo(() => {
-    const filtered = mock.strategy.matrix.filter((r) =>
+    const filtered = data.matrix.filter((r) =>
       statusFilter === 'all' ? true : r.status === statusFilter
     )
     const sorted = [...filtered].sort((a, b) => {

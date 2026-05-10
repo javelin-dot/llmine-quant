@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 const SEVERITY_META: Record<string, { label: string; tone: string }> = {
   high: { label: 'HIGH', tone: 'red' },
@@ -11,7 +11,8 @@ interface StressScenariosProps {
 }
 
 export default function StressScenarios({ onNavigate }: StressScenariosProps) {
-  const scenarios = mock.backtest.scenarios
+  const data = useBacktest()
+  const scenarios = data.scenarios
   return (
     <div className="bt-scenarios">
       <div className="bt-scenarios-head">

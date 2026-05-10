@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 export default function DecisionChain() {
-  const chain = mock.explain.decisionChain
+  const data = useExplain()
+  const chain = data.decisionChain
   return (
     <div className="ex-chain">
       <div className="ex-chain-head">

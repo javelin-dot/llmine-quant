@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 const TYPE_LABEL: Record<string, string> = {
   reduce: '减仓',
@@ -26,7 +26,8 @@ interface RebalanceProps {
 }
 
 export default function RebalanceActions({ onModal }: RebalanceProps) {
-  const actions = mock.portfolio.rebalance
+  const data = usePortfolio()
+  const actions = data.rebalance
   return (
     <div className="pf-rebalance">
       <div className="pf-rebalance-head">

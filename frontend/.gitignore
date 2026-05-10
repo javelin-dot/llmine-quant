@@ -15,7 +15,7 @@ dist-ssr
 .eslintcache
 .vite
 coverage
-.vitest
+.vitest/
 
 # Editor directories and files
 .vscode/*

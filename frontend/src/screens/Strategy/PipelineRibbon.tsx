@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useStrategy } from '../../contexts/StrategyContext'
 
 export default function PipelineRibbon() {
-  const stages = mock.strategy.pipelineStatus
+  const data = useStrategy()
+  const stages = data.pipelineStatus
   const total = stages.reduce((acc, s) => acc + s.count, 0)
   return (
     <div className="pipeline-ribbon">

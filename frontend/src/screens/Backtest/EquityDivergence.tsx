@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as echarts from 'echarts'
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 export default function EquityDivergence() {
+  const data = useBacktest()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pendingOptionRef = useRef<any>(null)
 
   const { dates, isValues, oosValues, ddValues, isReturn, oosReturn, stabilityRatio } = useMemo(() => {
-    const c = mock.backtest.equityCurves
+    const c = data.equityCurves
     const isMap = new Map(c.inSample.map((p) => [p.date, p.value]))
     const oosMap = new Map(c.outSample.map((p) => [p.date, p.value]))
     const ddMap = new Map(c.drawdown.map((p) => [p.date, p.value]))
@@ -247,7 +248,7 @@ export default function EquityDivergence() {
       <div className="bt-equity-head">
         <div>
           <h4 className="bt-equity-title">Equity Divergence · IS vs OOS</h4>
-          <span className="bt-equity-sub">{mock.backtest.equityCurves.label}</span>
+          <span className="bt-equity-sub">{data.equityCurves.label}</span>
         </div>
         <div className="bt-equity-pills">
           <div className="bt-equity-pill">

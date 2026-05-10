@@ -1,12 +1,13 @@
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 interface Props {
   onModal?: (target: string) => void
 }
 
 export default function SecurityHeader({ onModal }: Props) {
-  const h = mock.security.header
-  const kpis = mock.security.kpis
+  const data = useSecurity()
+  const h = data.header
+  const kpis = data.kpis
 
   // SVG gauge math (radius 52, stroke 9)
   const radius = 52

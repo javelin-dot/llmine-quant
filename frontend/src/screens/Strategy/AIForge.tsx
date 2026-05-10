@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mock } from '../../data'
+import { useStrategy } from '../../contexts/StrategyContext'
 
 const RISK_FILTERS: { id: 'all' | 'conservative' | 'balanced' | 'aggressive'; label: string; tone: string }[] = [
   { id: 'all', label: '全部', tone: 'blue' },
@@ -13,11 +13,12 @@ interface AIForgeProps {
 }
 
 export default function AIForge({ onModal }: AIForgeProps) {
-  const [prompt, setPrompt] = useState(mock.strategy.nlPrompt)
+  const data = useStrategy()
+  const [prompt, setPrompt] = useState(data.nlPrompt)
   const [risk, setRisk] = useState<'all' | 'conservative' | 'balanced' | 'aggressive'>('all')
   const [activeTemplate, setActiveTemplate] = useState<string | null>(null)
 
-  const filteredTemplates = mock.strategy.templates.filter((t) =>
+  const filteredTemplates = data.templates.filter((t) =>
     risk === 'all' ? true : t.risk === risk
   )
 
@@ -106,10 +107,10 @@ export default function AIForge({ onModal }: AIForgeProps) {
             </h4>
             <span className="ai-forge-feed-sub">Agent 决策追踪 · 实时</span>
           </div>
-          <span className="ai-forge-feed-count">{mock.strategy.feed.length}</span>
+          <span className="ai-forge-feed-count">{data.feed.length}</span>
         </div>
         <div className="ai-forge-feed">
-          {mock.strategy.feed.map((f, i) => (
+          {data.feed.map((f, i) => (
             <div className={`ai-forge-feed-item feed-${f.tone}`} key={i}>
               <div className="ai-forge-feed-time">{f.time}</div>
               <div className="ai-forge-feed-body">

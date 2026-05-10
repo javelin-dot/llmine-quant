@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 export default function FooterCards() {
-  const cards = mock.collaboration.footerCards
+  const data = useCollaboration()
+  const cards = data.footerCards
 
   return (
     <div className="collab-footer">

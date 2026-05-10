@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 interface Props {
   onModal?: (target: string) => void
@@ -11,9 +11,10 @@ const TIER_ICON: Record<string, string> = {
 }
 
 export default function DataHeader({ onModal }: Props) {
-  const h = mock.data.header
-  const tiers = mock.data.tiers
-  const kpis = mock.data.kpis
+  const data = useData()
+  const h = data.header
+  const tiers = data.tiers
+  const kpis = data.kpis
 
   // SVG gauge math (radius 52, stroke 9)
   const radius = 52

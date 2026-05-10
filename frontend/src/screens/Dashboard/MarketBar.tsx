@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 function formatPrice(value: number): string {
   if (value >= 1e12) return `${(value / 1e12).toFixed(2)}T`
@@ -9,10 +9,11 @@ function formatPrice(value: number): string {
 }
 
 export default function MarketBar() {
+  const data = useDashboard()
   return (
     <div className="market-bar">
       <div className="market-bar-track">
-        {mock.dashboard.marketIndices.map((idx) => {
+        {data.marketIndices.map((idx) => {
           const positive = idx.change >= 0
           return (
             <div className="market-tick" key={idx.symbol}>

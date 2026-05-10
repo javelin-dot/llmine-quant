@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 function fmtSec(s: number): string {
   if (s < 60) return `${s}s`
@@ -7,7 +7,8 @@ function fmtSec(s: number): string {
 }
 
 export default function ApprovalStrip() {
-  const s = mock.execution.summary
+  const data = useExecution()
+  const s = data.summary
 
   const cells: { label: string; value: string; trend?: string; tone: 'pos' | 'neg' | 'warn' | 'neutral' }[] = [
     { label: '待审批', value: `${s.pending}`, trend: '人工确认', tone: s.pending > 5 ? 'warn' : 'neutral' },

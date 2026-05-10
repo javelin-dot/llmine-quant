@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 const STATUS_LABEL: Record<string, string> = {
   running: '运行中',
@@ -30,7 +30,8 @@ function miniSparkline(points: number[]) {
 }
 
 export default function ABTestGrid() {
-  const tests = mock.collaboration.abTests
+  const data = useCollaboration()
+  const tests = data.abTests
 
   return (
     <div className="collab-ab">

@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 export default function KpiStrip() {
-  const kpis = mock.backtest.kpis
+  const data = useBacktest()
+  const kpis = data.kpis
   return (
     <div className="bt-kpi-strip">
       {kpis.map((k, i) => (

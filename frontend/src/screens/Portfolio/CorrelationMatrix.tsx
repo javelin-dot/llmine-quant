@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts'
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 export default function CorrelationMatrix() {
+  const data = usePortfolio()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pendingOptionRef = useRef<any>(null)
-  const c = mock.portfolio.correlation
+  const c = data.correlation
 
   useEffect(() => {
     if (!containerRef.current) return

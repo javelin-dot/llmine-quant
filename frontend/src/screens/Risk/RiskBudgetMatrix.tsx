@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 export default function RiskBudgetMatrix() {
-  const budgets = mock.risk.budgets
+  const data = useRisk()
+  const budgets = data.budgets
 
   return (
     <div className="rk-budget">

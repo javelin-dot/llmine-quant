@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 function Gauge({
   pct,
@@ -59,7 +59,8 @@ function Gauge({
 }
 
 export default function RiskBudgetGauges() {
-  const items = mock.portfolio.riskBudget
+  const data = usePortfolio()
+  const items = data.riskBudget
   return (
     <div className="pf-risk">
       <div className="pf-risk-head">

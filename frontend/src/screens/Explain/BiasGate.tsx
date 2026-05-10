@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 const STATUS_LABEL: Record<string, string> = {
   pass: '通过',
@@ -15,7 +15,8 @@ const STATUS_TONE: Record<string, 'green' | 'yellow' | 'red' | 'purple'> = {
 }
 
 export default function BiasGate() {
-  const checks = mock.explain.biasGate
+  const data = useExplain()
+  const checks = data.biasGate
   return (
     <div className="ex-bias">
       <div className="ex-bias-head">

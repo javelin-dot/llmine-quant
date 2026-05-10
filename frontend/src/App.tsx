@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { mock } from './data'
+import { useState, useCallback, useEffect } from 'react'
+import { api } from './lib/api'
 import Dashboard from './screens/Dashboard'
 import Strategy from './screens/Strategy'
 import Backtest from './screens/Backtest'
@@ -39,6 +39,19 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [modal, setModal] = useState<ModalType | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [globalData, setGlobalData] = useState<{
+    meta: { product: string; subtitle: string }
+    system: { healthScore: number; healthStatusLabel: string; healthBarHeights: number[]; autopilot: boolean; riskGateLabel: string }
+    modals: Record<string, { title: string; body: string; primary: string }>
+  } | null>(null)
+
+  useEffect(() => {
+    api.dashboard.overview()
+      .then((d) => {
+        setGlobalData({ meta: d.meta, system: d.system, modals: d.modals })
+      })
+      .catch((e) => console.error('Global API error:', e))
+  }, [])
 
   const toggleSidebar = useCallback(() => setSidebarCollapsed((v) => !v), [])
 
@@ -62,7 +75,7 @@ export default function App() {
     }
   }, [openModal])
 
-  const modalData = modal ? mock.modals[modal] : null
+  const modalData = modal && globalData ? globalData.modals[modal] : null
 
   return (
     <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
@@ -74,8 +87,8 @@ export default function App() {
         <div className="brand">
           <div className="logo" />
           <div>
-            <h1>{mock.meta.product}</h1>
-            <span>{mock.meta.subtitle}</span>
+            <h1>{globalData?.meta.product ?? 'LLMine Quant'}</h1>
+            <span>{globalData?.meta.subtitle ?? ''}</span>
           </div>
         </div>
 
@@ -110,11 +123,11 @@ export default function App() {
         <div className="side-card">
           <div className="label">System Health</div>
           <div className="score">
-            <strong>{mock.system.healthScore}</strong>
-            <span>{mock.system.healthStatusLabel}</span>
+            <strong>{globalData?.system.healthScore ?? '—'}</strong>
+            <span>{globalData?.system.healthStatusLabel ?? '—'}</span>
           </div>
           <div className="mini-bars" aria-hidden="true">
-            {mock.system.healthBarHeights.map((h, i) => (
+            {(globalData?.system.healthBarHeights ?? []).map((h, i) => (
               <i key={i} style={{ height: `${h}px` }} />
             ))}
           </div>
@@ -134,9 +147,9 @@ export default function App() {
           </div>
           <div className="top-actions">
             <span className="pill">
-              <span className="dot" /> AI Autopilot {mock.system.autopilot ? 'ON' : 'OFF'}
+              <span className="dot" /> AI Autopilot {globalData?.system.autopilot ? 'ON' : 'OFF'}
             </span>
-            <span className="pill">{mock.system.riskGateLabel}</span>
+            <span className="pill">{globalData?.system.riskGateLabel ?? '—'}</span>
             <button className="btn secondary" onClick={() => openModal('global')}>全局概览</button>
             <button className="btn danger" onClick={() => openModal('kill')}>Kill Switch</button>
           </div>

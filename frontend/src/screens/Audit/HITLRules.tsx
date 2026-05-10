@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useAudit } from '../../contexts/AuditContext'
 
 const STATUS_LABEL: Record<string, string> = {
   auto: 'AI 自动',
@@ -7,7 +7,8 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function HITLRules() {
-  const rules = mock.audit.hitlRules
+  const data = useAudit()
+  const rules = data.hitlRules
 
   return (
     <div className="audit-hitl">

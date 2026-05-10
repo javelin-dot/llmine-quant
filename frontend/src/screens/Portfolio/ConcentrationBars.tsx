@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 function Bar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -9,7 +9,8 @@ function Bar({ pct, color }: { pct: number; color: string }) {
 }
 
 export default function ConcentrationBars() {
-  const c = mock.portfolio.concentration
+  const data = usePortfolio()
+  const c = data.concentration
   const sectorMax = Math.max(...c.sectors.map((s) => s.weight))
   const holdingMax = Math.max(...c.holdings.map((h) => h.weight))
   const factorMax = Math.max(...c.factors.map((f) => Math.abs(f.exposure)))

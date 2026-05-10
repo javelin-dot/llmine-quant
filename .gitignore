@@ -42,6 +42,13 @@ htmlcov/
 .hypothesis/
 *.cover
 *.log
+coverage.xml
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+.uv/
+*.prof
 
 # Virtual environments
 .venv/
@@ -77,6 +84,22 @@ coverage/
 
 # Local data / caches (adjust paths to match your layout)
 *.sqlite
+*.sqlite3
 *.db-journal
+
+# Docker Compose — local overrides (secrets, bind mounts, ports)
+**/docker-compose.override.yml
+**/docker-compose.override.yaml
+
+# Terraform / OpenTofu — local state (commit .tf and .terraform.lock.hcl; never commit state secrets)
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Merge / editor scratch
+*.orig
+*~
+*.swp
+*.swo
 
 .vscode/

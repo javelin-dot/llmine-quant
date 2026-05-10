@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 const DECISION_LABEL: Record<string, string> = {
   allowed: 'ALLOWED',
@@ -15,7 +15,8 @@ const DECISION_ICON: Record<string, string> = {
 }
 
 export default function PolicyStream() {
-  const list = mock.risk.policyStream
+  const data = useRisk()
+  const list = data.policyStream
 
   const counts = list.reduce((acc, p) => {
     acc[p.decision] = (acc[p.decision] || 0) + 1

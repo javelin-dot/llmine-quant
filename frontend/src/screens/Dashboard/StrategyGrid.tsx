@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   live: { label: 'Live', cls: 'green' },
@@ -46,19 +46,20 @@ interface StrategyGridProps {
 }
 
 export default function StrategyGrid({ onNavigate }: StrategyGridProps) {
+  const data = useDashboard()
   return (
     <div className="strategy-grid-wrapper">
       <div className="strategy-grid-head">
         <div>
           <h4 className="strategy-grid-title">Active Strategies</h4>
-          <span className="strategy-grid-sub">{mock.dashboard.strategies.length} 个策略 · 实时收益</span>
+          <span className="strategy-grid-sub">{data.strategies.length} 个策略 · 实时收益</span>
         </div>
         <button className="strategy-grid-link" onClick={() => onNavigate?.('strategy')}>
           查看全部 →
         </button>
       </div>
       <div className="strategy-grid">
-        {mock.dashboard.strategies.map((s) => {
+        {data.strategies.map((s) => {
           const positive = s.return >= 0
           const meta = STATUS_META[s.status]
           return (

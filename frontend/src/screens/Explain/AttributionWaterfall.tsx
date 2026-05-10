@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 export default function AttributionWaterfall() {
-  const a = mock.explain.attribution
+  const data = useExplain()
+  const a = data.attribution
 
   const { steps, maxAbs } = useMemo(() => {
     const arr: { name: string; from: number; to: number; delta: number; desc?: string; type: 'base' | 'pos' | 'neg' | 'final' }[] = []

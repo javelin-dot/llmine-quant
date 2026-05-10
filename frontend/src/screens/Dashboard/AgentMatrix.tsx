@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 const STATUS_LABEL: Record<string, string> = {
   active: '运行中',
@@ -8,7 +8,8 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function AgentMatrix() {
-  const agents = mock.dashboard.agents
+  const data = useDashboard()
+  const agents = data.agents
   const activeCount = agents.filter((a) => a.status === 'active').length
 
   return (

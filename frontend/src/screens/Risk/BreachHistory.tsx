@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 const SEVERITY_LABEL: Record<string, string> = {
   critical: '严重',
@@ -14,7 +14,8 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function BreachHistory() {
-  const list = mock.risk.breaches
+  const data = useRisk()
+  const list = data.breaches
   const ongoing = list.filter((b) => b.status === 'ongoing').length
   const review = list.filter((b) => b.status === 'review').length
 

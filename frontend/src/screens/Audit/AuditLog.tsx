@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mock } from '../../data'
+import { useAudit } from '../../contexts/AuditContext'
 
 const RESULT_LABEL: Record<string, string> = {
   PASS: '通过',
@@ -17,8 +17,9 @@ const RESULT_LABEL: Record<string, string> = {
 type TypeFilter = 'all' | 'human' | 'agent' | 'system'
 
 export default function AuditLog() {
+  const data = useAudit()
   const [filter, setFilter] = useState<TypeFilter>('all')
-  const all = mock.audit.rows
+  const all = data.rows
   const list = filter === 'all' ? all : all.filter((r) => r.actorType === filter)
 
   const counts = all.reduce((acc, r) => {

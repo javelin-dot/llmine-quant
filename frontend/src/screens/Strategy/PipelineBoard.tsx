@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useStrategy } from '../../contexts/StrategyContext'
 
 interface PipelineBoardProps {
   onNavigate?: (target: string) => void
@@ -10,6 +10,7 @@ function tagClass(c?: string) {
 }
 
 export default function PipelineBoard({ onNavigate }: PipelineBoardProps) {
+  const data = useStrategy()
   return (
     <div className="pipeline-board-wrap">
       <div className="pipeline-board-head">
@@ -26,7 +27,7 @@ export default function PipelineBoard({ onNavigate }: PipelineBoardProps) {
         </div>
       </div>
       <div className="pipeline-board">
-        {mock.strategy.pipelineBoard.map((lane) => (
+        {data.pipelineBoard.map((lane) => (
           <div className={`pipeline-lane lane-${lane.tone}`} key={lane.lane}>
             <div className="pipeline-lane-head">
               <div className="pipeline-lane-titlewrap">

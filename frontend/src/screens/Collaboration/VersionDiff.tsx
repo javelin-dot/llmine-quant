@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 export default function VersionDiff() {
-  const diff = mock.collaboration.diff
+  const data = useCollaboration()
+  const diff = data.diff
 
   return (
     <div className="collab-diff">

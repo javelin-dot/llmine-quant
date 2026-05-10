@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useAudit } from '../../contexts/AuditContext'
 
 export default function ActorBreakdown() {
-  const stats = mock.audit.actorStats
+  const data = useAudit()
+  const stats = data.actorStats
   const total = stats.reduce((sum, s) => sum + s.count, 0)
 
   return (

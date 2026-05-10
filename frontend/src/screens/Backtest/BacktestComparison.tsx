@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 type SortKey = 'annualReturn' | 'maxDd' | 'sharpe' | 'oosScore' | 'name'
 type SortDir = 'asc' | 'desc'
@@ -48,11 +48,12 @@ interface BacktestComparisonProps {
 }
 
 export default function BacktestComparison({ onNavigate }: BacktestComparisonProps) {
+  const data = useBacktest()
   const [sortKey, setSortKey] = useState<SortKey>('oosScore')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const rows = useMemo(() => {
-    const sorted = [...mock.backtest.comparison].sort((a, b) => {
+    const sorted = [...data.comparison].sort((a, b) => {
       const cmp =
         sortKey === 'name'
           ? a.name.localeCompare(b.name)

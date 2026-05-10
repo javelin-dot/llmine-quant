@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 const SEVERITY_LABEL: Record<string, string> = {
   critical: '严重',
@@ -23,7 +23,8 @@ const TYPE_LABEL: Record<string, string> = {
 }
 
 export default function SecurityEvents() {
-  const list = mock.security.events
+  const data = useSecurity()
+  const list = data.events
   const ongoing = list.filter((b) => b.status === 'ongoing').length
   const review = list.filter((b) => b.status === 'review').length
 

@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 const STATUS_LABEL: Record<string, string> = {
   enforced: '已强制',
@@ -7,7 +7,8 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 export default function WithdrawalGuard() {
-  const w = mock.security.withdrawal
+  const data = useSecurity()
+  const w = data.withdrawal
 
   return (
     <div className="security-withdrawal">

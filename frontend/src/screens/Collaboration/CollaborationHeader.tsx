@@ -1,11 +1,12 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 interface Props {
   onModal?: (target: string) => void
 }
 
 export default function CollaborationHeader({ onModal }: Props) {
-  const kpis = mock.collaboration.kpis
+  const data = useCollaboration()
+  const kpis = data.kpis
 
   return (
     <header className="collab-header">

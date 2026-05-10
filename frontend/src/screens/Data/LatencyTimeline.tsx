@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 const W = 360
 const H = 220
@@ -8,7 +8,8 @@ const PAD_T = 16
 const PAD_B = 28
 
 export default function LatencyTimeline() {
-  const t = mock.data.latencyTrend
+  const data = useData()
+  const t = data.latencyTrend
   const all = [...t.research, ...t.paper, ...t.live]
   const maxV = Math.max(...all, t.slaMs * 1.2)
   const innerW = W - PAD_L - PAD_R

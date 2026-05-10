@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react'
 import * as echarts from 'echarts'
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 const STRATEGY_COLORS = ['#4c8dff', '#42e8ff', '#4ff0a2', '#a98bff', '#ffd166', '#ff8a4c', '#ff5c7c', '#5f6b85']
 
 export default function AllocationDonut() {
+  const data = usePortfolio()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pendingOptionRef = useRef<any>(null)
-  const strategies = mock.portfolio.allocation.strategies
+  const strategies = data.allocation.strategies
 
   const totalPnl = useMemo(() => strategies.reduce((s, x) => s + x.pnl, 0), [strategies])
-  const isCny = mock.portfolio.nav.currency === 'CNY'
+  const isCny = data.nav.currency === 'CNY'
   const ccy = isCny ? '¥' : '$'
 
   useEffect(() => {

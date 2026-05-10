@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 export default function AgentTrace() {
-  const trace = mock.execution.agentTrace
+  const data = useExecution()
+  const trace = data.agentTrace
 
   return (
     <div className="ex-agenttrace">

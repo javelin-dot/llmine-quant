@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 export default function ApprovalFlow() {
-  const flow = mock.collaboration.approvalFlow
+  const data = useCollaboration()
+  const flow = data.approvalFlow
   const done = flow.filter((s) => s.completed).length
   const total = flow.length
 

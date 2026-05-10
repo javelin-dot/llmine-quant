@@ -1,11 +1,12 @@
-import { mock } from '../../data'
+import { useAudit } from '../../contexts/AuditContext'
 
 interface Props {
   onModal?: (target: string) => void
 }
 
 export default function AuditHeader({ onModal }: Props) {
-  const kpis = mock.audit.kpis
+  const data = useAudit()
+  const kpis = data.kpis
 
   return (
     <header className="audit-header">

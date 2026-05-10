@@ -1,12 +1,13 @@
-import { mock } from '../../data'
+import { useRisk } from '../../contexts/RiskContext'
 
 interface RiskHeaderProps {
   onModal?: (target: string) => void
 }
 
 export default function RiskHeader({ onModal }: RiskHeaderProps) {
-  const h = mock.risk.header
-  const kpis = mock.risk.kpis
+  const data = useRisk()
+  const h = data.header
+  const kpis = data.kpis
 
   const score = h.healthScore
   const radius = 52

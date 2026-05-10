@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 type AlertType = 'approval' | 'risk' | 'system'
 
@@ -14,7 +14,8 @@ const TYPE_META: Record<AlertType, { label: string; icon: string; color: string 
 }
 
 export default function AlertQueue({ onNavigate }: AlertQueueProps) {
-  const alerts = mock.dashboard.alerts
+  const data = useDashboard()
+  const alerts = data.alerts
   const [activeTab, setActiveTab] = useState<AlertType>('approval')
 
   const counts: Record<AlertType, number> = {

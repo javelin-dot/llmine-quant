@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 export default function AIPermissionMatrix() {
-  const categories = mock.security.aiPermissions
+  const data = useSecurity()
+  const categories = data.aiPermissions
   const totalAllowed = categories.reduce((sum, c) => sum + c.allowed.length, 0)
   const totalBlocked = categories.reduce((sum, c) => sum + c.blocked.length, 0)
 

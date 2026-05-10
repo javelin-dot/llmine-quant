@@ -1,11 +1,12 @@
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 interface SignalHeaderProps {
   onModal?: (target: string) => void
 }
 
 export default function SignalHeader({ onModal }: SignalHeaderProps) {
-  const h = mock.explain.signalHeader
+  const data = useExplain()
+  const h = data.signalHeader
   const actionTone = h.action === 'BUY' ? 'pos' : h.action === 'SELL' ? 'neg' : 'neutral'
   const confPct = Math.round(h.confidence * 100)
 

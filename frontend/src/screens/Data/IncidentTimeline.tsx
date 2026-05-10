@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 const SEVERITY_LABEL: Record<string, string> = {
   critical: '严重',
@@ -23,7 +23,8 @@ const TYPE_LABEL: Record<string, string> = {
 }
 
 export default function IncidentTimeline() {
-  const list = mock.data.incidents
+  const data = useData()
+  const list = data.incidents
   const ongoing = list.filter((b) => b.status === 'ongoing').length
   const review = list.filter((b) => b.status === 'review').length
 

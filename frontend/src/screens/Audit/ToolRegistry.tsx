@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useAudit } from '../../contexts/AuditContext'
 
 export default function ToolRegistry() {
-  const tools = mock.audit.toolRegistry
+  const data = useAudit()
+  const tools = data.toolRegistry
 
   return (
     <div className="audit-tools">

@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 const STATUS_LABEL: Record<string, string> = {
   pass: 'PASS',
@@ -13,7 +13,8 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 export default function PreTradeChecks() {
-  const checks = mock.execution.preTradeChecks
+  const data = useExecution()
+  const checks = data.preTradeChecks
   const allPass = checks.every((c) => c.status === 'pass')
 
   return (

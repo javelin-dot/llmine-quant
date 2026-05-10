@@ -18,6 +18,22 @@ export const ashareMock: MockData = {
     pause: { title: '暂停策略确认', body: '由于行情源冲突和置信度不足，系统建议暂停新能源策略新开仓。该动作不涉及实盘买卖，仅冻结新信号并保留已有持仓处理规则。', primary: '暂停策略' },
   },
   dashboard: {
+    meta: { product: 'LLMine Quant', subtitle: 'AI-Native A-Share Quant Platform' },
+    system: {
+      healthScore: 98.7,
+      healthStatusLabel: 'LIVE',
+      healthBarHeights: [22, 35, 30, 44, 28, 48, 40, 37, 45, 31, 42, 47],
+      autopilot: true,
+      riskGateLabel: 'Risk Gate A-',
+    },
+    modals: {
+      global: { title: '全局系统概览', body: 'AI Autopilot 正常运行。当前 42 个策略版本、318 个 Agent 任务、7 个待审批动作。解释血缘、数据许可、实盘交易均受 Policy Engine、Risk Agent 与 Human Approval Center 约束。', primary: '知道了' },
+      kill: { title: '全局 Kill Switch', body: '触发后将立即暂停所有新开仓，仅允许减仓与撤单。不可恢复熔断恢复必须经过风控员审批。此原型仅展示交互，不会执行真实交易。', primary: '模拟触发熔断' },
+      create: { title: '启动 AI 策略任务', body: 'Command Center 将自动拆解任务：选择数据源、清洗数据、生成候选策略、静态安全检查、批量回测、样本外验证、风控评估、生成模拟盘部署计划。涉及实盘交易时会单独请求确认。', primary: '启动任务' },
+      autopilot: { title: 'Autopilot 配置', body: '建议默认开放 L0-L4 权限：读取、生成草稿、运行回测、模拟盘自动执行、生成实盘提案。L5 实盘自动执行默认关闭，只能通过预授权限额开启。', primary: '保存配置' },
+      approve: { title: '交易审批确认', body: '该订单已通过账户级、组合级、策略级三层风控。提交后 Execution Agent 将使用幂等键发送订单，并持续监控成交、部分成交、撤单和回报异常。', primary: '批准执行' },
+      pause: { title: '暂停策略确认', body: '由于行情源冲突和置信度不足，系统建议暂停新能源策略新开仓。该动作不涉及实盘买卖，仅冻结新信号并保留已有持仓处理规则。', primary: '暂停策略' },
+    },
     marketIndices: [
       { name: '上证指数', symbol: '000001.SH', price: 3350.12, change: 0.32, volume: '4523亿' },
       { name: '深证成指', symbol: '399001.SZ', price: 10872.45, change: 0.45, volume: '6128亿' },

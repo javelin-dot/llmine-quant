@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 const TIER_LABEL: Record<string, string> = {
   research: 'RESEARCH',
@@ -17,8 +17,9 @@ const STATUS_LABEL: Record<string, string> = {
 type TierFilter = 'all' | 'research' | 'paper' | 'live'
 
 export default function SourceMatrix() {
+  const data = useData()
   const [filter, setFilter] = useState<TierFilter>('all')
-  const all = mock.data.sources
+  const all = data.sources
   const list = filter === 'all' ? all : all.filter((s) => s.tier === filter)
 
   const counts = all.reduce((acc, s) => {

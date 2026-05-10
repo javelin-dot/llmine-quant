@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 export default function ParameterHeatmap() {
-  const heatmap = mock.backtest.parameterHeatmap
+  const data = useBacktest()
+  const heatmap = data.parameterHeatmap
   const { min, max } = useMemo(() => {
     const flat = heatmap.cells.flat()
     return { min: Math.min(...flat), max: Math.max(...flat) }

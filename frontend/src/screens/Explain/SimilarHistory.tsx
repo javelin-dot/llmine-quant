@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 export default function SimilarHistory() {
-  const h = mock.explain.similarHistory
+  const data = useExplain()
+  const h = data.similarHistory
   const winRatePct = (h.winRate * 100).toFixed(1)
   const avgPct = (h.avgReturn * 100).toFixed(1)
 

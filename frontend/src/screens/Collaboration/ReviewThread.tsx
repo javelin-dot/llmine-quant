@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useCollaboration } from '../../contexts/CollaborationContext'
 
 export default function ReviewThread() {
-  const list = mock.collaboration.reviewThread
+  const data = useCollaboration()
+  const list = data.reviewThread
 
   return (
     <div className="collab-thread">

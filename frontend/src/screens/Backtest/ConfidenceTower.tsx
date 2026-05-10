@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 export default function ConfidenceTower() {
-  const c = mock.backtest.confidence
+  const data = useBacktest()
+  const c = data.confidence
   const score = c.score
   const pct = Math.max(0, Math.min(1, score))
   const radius = 64

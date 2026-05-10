@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 export default function ExecutionMetrics() {
-  const m = mock.execution.metrics
+  const data = useExecution()
+  const m = data.metrics
   const slip = m.slippage
   const fr = m.fillRate
 

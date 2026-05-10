@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 const TYPE_LABEL: Record<string, string> = {
   live: '开仓',
@@ -38,7 +38,8 @@ interface QueueProps {
 }
 
 export default function ApprovalQueue({ onModal }: QueueProps) {
-  const list = mock.execution.approvals
+  const data = useExecution()
+  const list = data.approvals
 
   return (
     <div className="ex-approval-queue">

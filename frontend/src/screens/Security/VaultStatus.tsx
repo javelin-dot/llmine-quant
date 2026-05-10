@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { mock } from '../../data'
+import { useSecurity } from '../../contexts/SecurityContext'
 
 const TYPE_ICON: Record<string, string> = {
   api: '⌬',
@@ -27,8 +27,9 @@ const STATUS_LABEL: Record<string, string> = {
 type TypeFilter = 'all' | 'api' | 'wallet' | 'ssh' | 'webhook' | 'db'
 
 export default function VaultStatus() {
+  const data = useSecurity()
   const [filter, setFilter] = useState<TypeFilter>('all')
-  const v = mock.security.vault
+  const v = data.vault
   const keys = v.keys
   const list = filter === 'all' ? keys : keys.filter((k) => k.type === filter)
 

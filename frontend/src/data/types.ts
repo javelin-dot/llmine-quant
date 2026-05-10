@@ -3,6 +3,9 @@ export interface MockData {
   system: { healthScore: number; healthStatusLabel: string; healthBarHeights: number[]; autopilot: boolean; riskGateLabel: string }
   modals: Record<string, { title: string; body: string; primary: string }>
   dashboard: {
+    meta: { product: string; subtitle: string }
+    system: { healthScore: number; healthStatusLabel: string; healthBarHeights: number[]; autopilot: boolean; riskGateLabel: string }
+    modals: Record<string, { title: string; body: string; primary: string }>
     marketIndices: { name: string; symbol: string; price: number; change: number; volume: string }[]
     portfolioMetrics: {
       totalReturn: number

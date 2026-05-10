@@ -1,8 +1,9 @@
 import { useMemo } from 'react'
-import { mock } from '../../data'
+import { useBacktest } from '../../contexts/BacktestContext'
 
 export default function WalkForwardBars() {
-  const folds = mock.backtest.walkForward.folds
+  const data = useBacktest()
+  const folds = data.walkForward.folds
   const { maxAbs, divergentCount } = useMemo(() => {
     const all = folds.flatMap((f) => [f.isReturn, f.oosReturn])
     const m = Math.max(...all.map((v) => Math.abs(v)), 0.05)

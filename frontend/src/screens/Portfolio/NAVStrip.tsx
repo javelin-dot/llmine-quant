@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { usePortfolio } from '../../contexts/PortfolioContext'
 
 function fmtCurrency(n: number, currency: string): string {
   if (currency === 'USDT' || currency === 'USD') {
@@ -14,7 +14,8 @@ function fmtPct(p: number, withSign = true): string {
 }
 
 export default function NAVStrip() {
-  const n = mock.portfolio.nav
+  const data = usePortfolio()
+  const n = data.nav
   const todayTone = n.todayPnl >= 0 ? 'pos' : 'neg'
 
   const cells: { label: string; value: string; trend?: string; tone?: 'pos' | 'neg' | 'neutral' | 'warn' }[] = [

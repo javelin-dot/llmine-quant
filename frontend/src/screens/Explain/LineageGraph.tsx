@@ -1,7 +1,8 @@
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 export default function LineageGraph() {
-  const lineage = mock.explain.lineage
+  const data = useExplain()
+  const lineage = data.lineage
   return (
     <div className="ex-lineage">
       <div className="ex-lineage-head">

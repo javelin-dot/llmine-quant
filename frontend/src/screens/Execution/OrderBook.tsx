@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useExecution } from '../../contexts/ExecutionContext'
 
 const STATUS_LABEL: Record<string, string> = {
   filled: '已成交',
@@ -17,8 +17,9 @@ const STATUS_ICON: Record<string, string> = {
 }
 
 export default function OrderBook() {
-  const orders = mock.execution.orderBook
-  const isCny = mock.portfolio.nav.currency === 'CNY'
+  const data = useExecution()
+  const orders = data.orderBook
+  const isCny = true // CNY for A-share
   const ccy = isCny ? '¥' : '$'
 
   return (

@@ -1,4 +1,4 @@
-import { mock } from '../../data'
+import { useData } from '../../contexts/DataContext'
 
 const TIER_ORDER: Record<string, number> = {
   raw: 0,
@@ -22,7 +22,8 @@ const PAD_X = 80
 const PAD_Y = 40
 
 export default function LineageGraph() {
-  const { nodes, edges } = mock.data.lineage
+  const data = useData()
+  const { nodes, edges } = data.lineage
 
   // Group nodes by tier
   const byTier: Record<string, typeof nodes> = { raw: [], feature: [], model: [], signal: [], order: [] }

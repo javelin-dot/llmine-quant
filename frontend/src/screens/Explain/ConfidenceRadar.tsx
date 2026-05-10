@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
 import * as echarts from 'echarts'
-import { mock } from '../../data'
+import { useExplain } from '../../contexts/ExplainContext'
 
 export default function ConfidenceRadar() {
+  const data = useExplain()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
-  const r = mock.explain.confidenceRadar
+  const r = data.confidenceRadar
 
   useEffect(() => {
     if (!containerRef.current) return

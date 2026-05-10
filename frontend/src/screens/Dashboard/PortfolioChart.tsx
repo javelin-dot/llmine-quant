@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts'
-import { mock } from '../../data'
+import { useDashboard } from '../../contexts/DashboardContext'
 
 type TimeRange = '1M' | '3M' | '6M' | '1Y' | 'ALL'
 
@@ -18,17 +18,18 @@ function formatPercent(v: number): string {
 }
 
 export default function PortfolioChart() {
+  const data = useDashboard()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   const [range, setRange] = useState<TimeRange>('6M')
 
   const series = useMemo(() => {
-    const all = mock.dashboard.equityCurve
+    const all = data.equityCurve
     const weeks = RANGE_WEEKS[range]
     return weeks >= all.length ? all : all.slice(all.length - weeks)
   }, [range])
 
-  const metrics = mock.dashboard.portfolioMetrics
+  const metrics = data.portfolioMetrics
 
   useEffect(() => {
     if (!containerRef.current) return
