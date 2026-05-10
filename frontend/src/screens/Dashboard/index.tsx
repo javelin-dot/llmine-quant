@@ -1,0 +1,30 @@
+import MarketBar from './MarketBar'
+import PortfolioChart from './PortfolioChart'
+import AgentMatrix from './AgentMatrix'
+import AlertQueue from './AlertQueue'
+import StrategyGrid from './StrategyGrid'
+import QuickActions from './QuickActions'
+
+interface DashboardProps {
+  onNavigate?: (target: string) => void
+  onModal?: (target: string) => void
+}
+
+export default function Dashboard({ onNavigate, onModal }: DashboardProps) {
+  return (
+    <div className="dashboard-root">
+      <MarketBar />
+      <div className="dashboard-main">
+        <div className="dashboard-main-left">
+          <PortfolioChart />
+        </div>
+        <div className="dashboard-main-right">
+          <AgentMatrix />
+          <AlertQueue onNavigate={onNavigate} />
+        </div>
+      </div>
+      <StrategyGrid onNavigate={onNavigate} />
+      <QuickActions onNavigate={onNavigate} onModal={onModal} />
+    </div>
+  )
+}

@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #070912;
+  --color-bg-soft: #0c1020;
+  --color-panel: rgba(18, 24, 44, 0.78);
+  --color-panel-strong: rgba(21, 29, 54, 0.96);
+  --color-panel-light: rgba(255, 255, 255, 0.055);
+  --color-line: rgba(255, 255, 255, 0.095);
+  --color-line-strong: rgba(255, 255, 255, 0.18);
+  --color-text: #eef4ff;
+  --color-muted: #8f9bb7;
+  --color-subtle: #5f6b85;
+  --color-accent-blue: #4c8dff;
+  --color-accent-cyan: #42e8ff;
+  --color-accent-green: #4ff0a2;
+  --color-accent-yellow: #ffd166;
+  --color-accent-orange: #ff9f43;
+  --color-accent-red: #ff5c7c;
+  --color-accent-purple: #a98bff;
+  --color-accent-pink: #ff6bd5;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+}

@@ -57,14 +57,23 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# Node (if you add a JS toolchain later)
+# Node / frontend tooling
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+pnpm-error.log*
+*.tsbuildinfo
+.eslintcache
+.vite/
+coverage/
+.vitest/
+.turbo/
+.cache/
 
-# IDE (uncomment if you prefer not to commit editor config)
-# .idea/
+# IDE (local editor state — keep shared rules in-repo via docs or templates)
+.idea/
 
 # Local data / caches (adjust paths to match your layout)
 *.sqlite
