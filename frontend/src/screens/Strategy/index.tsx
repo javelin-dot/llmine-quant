@@ -122,7 +122,6 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
 
       {selectedStrategyId && (
         <StrategyDetailModal
-          key={selectedStrategyId}
           strategyId={selectedStrategyId}
           onClose={() => setSelectedStrategyId(null)}
           onChanged={refresh}

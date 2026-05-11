@@ -57,6 +57,8 @@ export default function StrategyDetailModal({ strategyId, onClose, onChanged }: 
 
   useEffect(() => {
     let alive = true
+    setError(null)
+    setLoading(true)
     api.strategy.detail(strategyId)
       .then((d) => {
         if (!alive) return
@@ -142,7 +144,7 @@ export default function StrategyDetailModal({ strategyId, onClose, onChanged }: 
             ) : (
               <h3 className="sd-name">{detail?.name ?? '加载中…'}</h3>
             )}
-            <span className="sd-id">#{strategyId.slice(0, 8)}</span>
+            <span className="sd-id">#{(detail?.id ?? strategyId).slice(0, 8)}</span>
           </div>
           <div className="sd-head-actions">
             {!editing && detail && (

@@ -127,6 +127,34 @@ async def _run_pipeline_bg(task_id: str) -> None:
         await service.run_pipeline(task_id)
 
 
+async def _resolve_live_strategy(
+    db: AsyncSession, strategy_or_task_id: str
+) -> tuple[Strategy, str] | None:
+    """Return (Strategy, canonical_strategy_id) or None.
+
+    Supports lookup by real strategy id, or by ``StrategyTask.id`` when the client
+    mistakenly uses the generation task UUID (same shape as strategy ids).
+    """
+    strategy = await db.get(Strategy, strategy_or_task_id)
+    if strategy is not None:
+        if strategy.deleted_at is not None:
+            return None
+        return (strategy, strategy.id)
+    task = await db.get(StrategyTask, strategy_or_task_id)
+    if task is not None and task.strategy_id:
+        strategy = await db.get(Strategy, task.strategy_id)
+        if strategy is not None and strategy.deleted_at is None:
+            return (strategy, strategy.id)
+
+    version = await db.get(StrategyVersion, strategy_or_task_id)
+    if version is not None:
+        strategy = await db.get(Strategy, version.strategy_id)
+        if strategy is not None and strategy.deleted_at is None:
+            return (strategy, strategy.id)
+
+    return None
+
+
 # ── routes ────────────────────────────────────────────────────────────
 
 @router.get("/overview", response_model=StrategyScreen)
@@ -401,20 +429,21 @@ async def get_strategy(
     db: AsyncSession = Depends(get_db),
 ) -> StrategyDetail:
     """Return strategy detail with versions and recent pipeline events."""
-    strategy = await db.get(Strategy, strategy_id)
-    if strategy is None or strategy.deleted_at is not None:
+    resolved = await _resolve_live_strategy(db, strategy_id)
+    if resolved is None:
         raise HTTPException(status_code=404, detail="Strategy not found")
+    strategy, resolved_id = resolved
 
     version_rows = await db.execute(
         select(StrategyVersion)
-        .where(StrategyVersion.strategy_id == strategy_id)
+        .where(StrategyVersion.strategy_id == resolved_id)
         .order_by(StrategyVersion.created_at.desc())
     )
     versions = [_version_out(v) for v in version_rows.scalars().all()]
 
     event_rows = await db.execute(
         select(PipelineEvent)
-        .where(PipelineEvent.strategy_id == strategy_id)
+        .where(PipelineEvent.strategy_id == resolved_id)
         .order_by(PipelineEvent.created_at.desc())
         .limit(20)
     )

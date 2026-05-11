@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from pydantic_settings import BaseSettings
 
@@ -153,5 +154,25 @@ def _auto_detect_credentials(s: Settings) -> None:
         s.llm_source = "env"
 
 
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _normalize_sqlite_database_url(url: str) -> str:
+    """Anchor relative SQLite URLs to the backend package root (…/backend/).
+
+    Without this, ``sqlite+aiosqlite:///./dev.db`` resolves from the process cwd.
+    Overview vs. other requests then may not see the same file if cwd differs
+    (e.g. ``uvicorn`` started from repo root vs. ``backend/``).
+    """
+    marker = "sqlite+aiosqlite:///./"
+    if not url.startswith(marker):
+        return url
+    rel = url[len(marker) :]
+    abs_path = (_BACKEND_ROOT / rel).resolve()
+    # Four slashes after the scheme for absolute POSIX paths (SQLAlchemy convention).
+    return "sqlite+aiosqlite:///" + quote(str(abs_path), safe="/")
+
+
 settings = Settings()
 _auto_detect_credentials(settings)
+settings.database_url = _normalize_sqlite_database_url(settings.database_url)

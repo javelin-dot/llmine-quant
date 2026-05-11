@@ -44,7 +44,7 @@ export default function StrategyLifecycle({ strategyId }: StrategyLifecycleProps
     if (matrixRow) {
       const status = matrixRow.status
       if (status === 'draft') return 'draft'
-      if (status === 'backtest' || status === 'backtesting') return 'backtest'
+      if (status === 'backtest' || (status as string) === 'backtesting') return 'backtest'
       if (status === 'paper') return 'paper'
       if (status === 'live') return 'live'
       if (status === 'paused') return 'monitor'

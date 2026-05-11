@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '../../lib/api'
+import { api, type StrategyDetail } from '../../lib/api'
 import { useStrategy } from '../../contexts/StrategyContext'
 
 const MARKETS = ['A-Share', 'US Equity', 'Crypto', 'Futures', 'FX']
@@ -79,6 +79,25 @@ interface StrategyBuilderProps {
   onOpenStrategy?: (id: string) => void
 }
 
+function clipText(text: string, maxChars: number): string {
+  const t = text.trim()
+  if (!t) return ''
+  if (t.length <= maxChars) return t
+  return `${t.slice(0, maxChars)}…`
+}
+
+function frequencyLabel(freq: string): string {
+  const map: Record<string, string> = {
+    '1m': '1 分钟',
+    '5m': '5 分钟',
+    '15m': '15 分钟',
+    '1h': '1 小时',
+    '1d': '日频',
+    '1w': '周频',
+  }
+  return map[freq] || freq || '未指定'
+}
+
 export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyBuilderProps) {
   const data = useStrategy()
 
@@ -110,12 +129,90 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
 
   const wsRef = useRef<WebSocket | null>(null)
   const draftRef = useRef<HTMLDivElement | null>(null)
+  /** Avoid double completion when WS and HTTP poll both see terminal state. */
+  const generationDoneRef = useRef(false)
+  const nlBriefRef = useRef(nlBrief)
+  nlBriefRef.current = nlBrief
 
   // Build risk constraint text from selected profile
   const riskProfileMeta = RISK_PROFILES.find((r) => r.id === riskProfile)
   const riskConstraintText = riskProfileMeta
     ? riskProfileMeta.constraints.map((c) => `${c.label} ${c.value}`).join(', ')
     : ''
+
+  /** @param nlHint 生成刚完成时传入概要框文案；默认载入最新策略时传 null，避免随输入框抖动重复请求 */
+  const buildDraftFromStrategyDetail = useCallback(
+    (d: StrategyDetail, nlHint: string | null): StrategyDraft => {
+      const v0 = d.versions[0]
+      const code = v0?.codeText ?? null
+      const codeSnippet = code ? clipText(code, 560) : ''
+
+      const metricParts: string[] = []
+      if (d.sharpe != null) metricParts.push(`夏普 ${d.sharpe.toFixed(2)}`)
+      if (d.maxDd != null) metricParts.push(`最大回撤 ${(d.maxDd * 100).toFixed(1)}%`)
+      if (d.annualReturn != null) metricParts.push(`年化收益 ${(d.annualReturn * 100).toFixed(1)}%`)
+      if (d.oosScore != null) metricParts.push(`样本外得分 ${d.oosScore.toFixed(2)}`)
+      const metricsLine =
+        metricParts.length > 0
+          ? `流水线内模拟回测快照：${metricParts.join('；')}。`
+          : '具体绩效以策略详情与后续正式回测为准。'
+
+      const pipelineLine =
+        d.recentEvents?.length > 0
+          ? `管线轨迹（最近几步）：${d.recentEvents
+              .slice(0, 5)
+              .map((e) => `${e.stage} / ${e.event}`)
+              .join(' → ')}。`
+          : ''
+
+      const desc = d.description?.trim()
+      const signalCore =
+        desc ||
+        '本版将自然语言诉求落实为可执行的策略代码；若描述为空，请打开右侧详情查看「代码」与事件日志。'
+      const signalDefinition = codeSnippet
+        ? `${signalCore}\n\n【生成代码节选】\n${codeSnippet}`
+        : signalCore
+
+      const briefLine = nlHint?.trim()
+        ? `您在概要中的表述（节选）：${clipText(nlHint, 260)}`
+        : '当前为按「最近更新时间」自动载入的策略；左侧概要可与本条独立，填写后点击生成将基于概要产生新版本。'
+
+      const entryRules = [
+        `因子族 / 风格：${d.family}`,
+        `交易市场：${d.market}`,
+        d.universe ? `股票池或标的范围：${d.universe}` : null,
+        `生成时选择的策略类型（概要）：${strategyStyle}`,
+        briefLine,
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      const exitRules = [
+        '出场、止损与持仓长度等以生成代码中的逻辑为准（信号反转、阈值、时间止损等均在代码中实现）。',
+        metricsLine,
+        pipelineLine,
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      const bench =
+        (d.universe ?? '').trim() || universe.trim() || '概要未填股票池时，可与详情中的 universe 字段或默认基准对照。'
+
+      return {
+        id: d.id,
+        name: d.name,
+        status: '草稿',
+        signalDefinition,
+        entryRules,
+        exitRules,
+        rebalanceFrequency: `元数据中的调仓周期字段：${frequencyLabel(d.frequency)}（请与代码内的再平衡/调仓实现对照）。`,
+        positionSizing: `风险偏好（策略记录）：${d.riskProfile}。概要侧约束：${riskConstraintText || '未额外填写'}`,
+        riskConstraints: riskConstraintText,
+        benchmark: bench,
+      }
+    },
+    [riskConstraintText, universe, strategyStyle]
+  )
 
   // Scroll draft into view when result appears
   useEffect(() => {
@@ -124,13 +221,36 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
     }
   }, [draftResult])
 
-  // WebSocket + fallback logic
+  // 未在生成时：默认展示矩阵中最近更新的一条策略（与 overview 中 matrix 顺序一致）
+  useEffect(() => {
+    if (generating) return
+    if (!data.matrix?.length) {
+      setDraftResult(null)
+      return
+    }
+    const latestId = data.matrix[0].id
+    let canceled = false
+    ;(async () => {
+      try {
+        const d = await api.strategy.detail(latestId)
+        if (canceled) return
+        setDraftResult(buildDraftFromStrategyDetail(d, null))
+      } catch {
+        if (!canceled) setDraftResult(null)
+      }
+    })()
+    return () => {
+      canceled = true
+    }
+  }, [data.matrix, generating, buildDraftFromStrategyDetail])
+
+  // WebSocket (live trace) + HTTP poll (reliable draft — pipeline may finish before WS connects)
   useEffect(() => {
     if (!generating || !taskId) return
 
-    let fallbackInterval: ReturnType<typeof setInterval> | null = null
-    let fallbackTimeout: ReturnType<typeof setTimeout> | null = null
+    let pollInterval: ReturnType<typeof setInterval> | null = null
     let closed = false
+    generationDoneRef.current = false
 
     const updateTrace = (stage: string, status: TraceItem['status'], message: string) => {
       const agentMap: Record<string, string> = {
@@ -149,6 +269,121 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
       )
     }
 
+    const clearPoll = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval)
+        pollInterval = null
+      }
+    }
+
+    const finishFailure = (errMsg: string) => {
+      if (generationDoneRef.current || closed) return
+      generationDoneRef.current = true
+      clearPoll()
+      updateTrace('backtest', 'failed', errMsg)
+      setGenerating(false)
+      onRefresh?.()
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+    }
+
+    /** Only when strategy detail API is unavailable; WS payload rarely carries narrative fields. */
+    const applyDraftFromWsDetail = (detail: Record<string, string | undefined>) => {
+      setDraftResult({
+        id: (detail.strategyId as string) || taskId,
+        name: (detail.strategyName as string) || 'AI 生成策略',
+        status: '草稿',
+        signalDefinition:
+          (detail.signalDefinition as string) ||
+          '未能从服务端拉取完整策略说明；请刷新后打开「策略详情」查看代码与描述。',
+        entryRules: (detail.entryRules as string) || '请从策略详情或重新生成获取入场逻辑说明。',
+        exitRules: (detail.exitRules as string) || '请从策略详情或重新生成获取出场逻辑说明。',
+        rebalanceFrequency: (detail.rebalanceFrequency as string) || '见策略元数据或代码中的调仓逻辑。',
+        positionSizing: (detail.positionSizing as string) || '见概要中的风险偏好与详情中的风险字段。',
+        riskConstraints: riskConstraintText,
+        benchmark: (detail.benchmark as string) || universe || '见概要或详情中的基准设置。',
+      })
+    }
+
+    const finishSuccess = async (opts: { strategyId: string | null; wsDetail?: Record<string, unknown> }) => {
+      if (generationDoneRef.current || closed) return
+      generationDoneRef.current = true
+      clearPoll()
+
+      updateTrace('backtest', 'completed', 'Backtest completed')
+      updateTrace('risk', 'completed', 'Constraints validated')
+      updateTrace('running', 'completed', 'Signal rules generated')
+      updateTrace('queued', 'completed', 'Market universe scanned')
+
+      const sid = opts.strategyId
+      let draftLoaded = false
+      if (sid) {
+        try {
+          const d = await api.strategy.detail(sid)
+          setDraftResult(
+            buildDraftFromStrategyDetail(d, nlBriefRef.current.trim() || null)
+          )
+          draftLoaded = true
+        } catch {
+          draftLoaded = false
+        }
+      }
+      if (!draftLoaded && opts.wsDetail && typeof opts.wsDetail === 'object') {
+        applyDraftFromWsDetail(opts.wsDetail as Record<string, string | undefined>)
+        draftLoaded = true
+      }
+      if (!draftLoaded) {
+        setDraftResult({
+          id: sid || taskId,
+          name: sid ? `策略（${sid.slice(0, 8)}）` : 'AI 生成策略',
+          status: '草稿',
+          signalDefinition:
+            '未能加载策略详情（可能网络或服务异常）。请稍后点击矩阵中的策略名称，或刷新页面再试。',
+          entryRules: `任务 ID 片段：${taskId?.slice(0, 8) ?? '—'}；策略 ID：${sid?.slice(0, 8) ?? '—'}`,
+          exitRules: '打开弹窗中的「策略详情」可查看完整版本与代码。',
+          rebalanceFrequency: '—',
+          positionSizing: riskConstraintText || '—',
+          riskConstraints: riskConstraintText,
+          benchmark: universe || '—',
+        })
+      }
+
+      if (sid) onOpenStrategy?.(sid)
+      setGenerating(false)
+      onRefresh?.()
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+    }
+
+    const pollTaskOnce = async () => {
+      if (closed || generationDoneRef.current) return
+      try {
+        const task = await api.strategy.getTask(taskId)
+        setTaskStatus(task.status)
+        setTaskProgress(task.progress)
+
+        const feed = await api.strategy.getFeed()
+        setRawFeed(feed)
+
+        const done =
+          task.status === 'succeeded' || task.status === 'done' || task.status === 'completed'
+        if (done) {
+          await finishSuccess({ strategyId: task.strategyId })
+        } else if (task.status === 'failed') {
+          finishFailure(task.error || 'Generation failed')
+        }
+      } catch (e) {
+        console.error('Task poll error:', e)
+      }
+    }
+
+    pollInterval = setInterval(() => void pollTaskOnce(), 1200)
+    void pollTaskOnce()
+
     const connectWs = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
       const ws = new WebSocket(`${protocol}://${window.location.host}/ws/strategy-events`)
@@ -156,12 +391,21 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
 
       ws.onmessage = (event) => {
         try {
-          const msg = JSON.parse(event.data)
+          const msg = JSON.parse(event.data) as {
+            type?: string
+            taskId?: string
+            stage?: string
+            progress?: number
+            agent?: string
+            event?: string
+            timestamp?: string
+            detail?: Record<string, unknown> | string
+          }
           if (msg.type !== 'strategy.event') return
           if (msg.taskId !== taskId) return
 
-          setTaskStatus(msg.stage)
-          setTaskProgress(msg.progress)
+          setTaskStatus(msg.stage ?? '')
+          setTaskProgress(typeof msg.progress === 'number' ? msg.progress : 0)
 
           const time = msg.timestamp
             ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
@@ -182,48 +426,31 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
           if (msg.stage === 'risk') updateTrace('risk', 'running', 'Validating constraints...')
           if (msg.stage === 'backtest') updateTrace('backtest', 'running', 'Running backtest simulation...')
 
-          const isDone = msg.stage === 'done' || msg.stage === 'succeeded' || msg.stage === 'completed'
+          const isDone =
+            msg.stage === 'done' || msg.stage === 'succeeded' || msg.stage === 'completed'
           if (isDone) {
-            updateTrace('backtest', 'completed', 'Backtest completed')
-            updateTrace('risk', 'completed', 'Constraints validated')
-            updateTrace('running', 'completed', 'Signal rules generated')
-            updateTrace('queued', 'completed', 'Market universe scanned')
-
-            setGenerating(false)
-            onRefresh?.()
-
-            const detail = msg.detail || {}
-            setDraftResult({
-              id: detail.strategyId || taskId,
-              name: detail.strategyName || 'AI Generated Strategy',
-              status: 'Draft',
-              signalDefinition: detail.signalDefinition || 'Signal rules generated by Strategy Agent.',
-              entryRules: detail.entryRules || 'Entry rules defined.',
-              exitRules: detail.exitRules || 'Exit rules defined.',
-              rebalanceFrequency: detail.rebalanceFrequency || 'Weekly',
-              positionSizing: detail.positionSizing || 'Equal-weight',
-              riskConstraints: riskConstraintText,
-              benchmark: detail.benchmark || universe || 'CSI 300',
-            })
-
-            if (detail.strategyId) {
-              onOpenStrategy?.(detail.strategyId)
+            let detail: Record<string, unknown> = {}
+            if (msg.detail != null) {
+              if (typeof msg.detail === 'string') {
+                try {
+                  detail = JSON.parse(msg.detail) as Record<string, unknown>
+                } catch {
+                  detail = {}
+                }
+              } else {
+                detail = msg.detail
+              }
             }
-
-            if (fallbackInterval) {
-              clearInterval(fallbackInterval)
-              fallbackInterval = null
-            }
-            ws.close()
+            const strategyId =
+              (detail.strategyId as string | undefined) ||
+              (detail.strategy_id as string | undefined) ||
+              null
+            void finishSuccess({ strategyId, wsDetail: Object.keys(detail).length ? detail : undefined })
           } else if (msg.stage === 'failed' || msg.stage === 'error') {
-            updateTrace('backtest', 'failed', msg.detail?.error || 'Generation failed')
-            setGenerating(false)
-            onRefresh?.()
-            if (fallbackInterval) {
-              clearInterval(fallbackInterval)
-              fallbackInterval = null
-            }
-            ws.close()
+            const d = msg.detail
+            let err = 'Generation failed'
+            if (d && typeof d === 'object' && 'error' in d) err = String((d as { error?: string }).error || err)
+            finishFailure(err)
           }
         } catch {
           // ignore malformed messages
@@ -231,87 +458,33 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
       }
 
       ws.onerror = () => {
-        if (!closed && !fallbackInterval) startFallback()
+        /* HTTP poll still drives completion */
       }
 
       ws.onclose = () => {
         wsRef.current = null
-        if (!closed && generating && !fallbackInterval) startFallback()
       }
-    }
-
-    const startFallback = () => {
-      fallbackInterval = setInterval(async () => {
-        try {
-          const task = await api.strategy.getTask(taskId)
-          setTaskStatus(task.status)
-          setTaskProgress(task.progress)
-          const feed = await api.strategy.getFeed()
-          setRawFeed(feed)
-
-          const done = task.status === 'succeeded' || task.status === 'done' || task.status === 'completed'
-          if (done) {
-            updateTrace('backtest', 'completed', 'Backtest completed')
-            updateTrace('risk', 'completed', 'Constraints validated')
-            updateTrace('running', 'completed', 'Signal rules generated')
-            updateTrace('queued', 'completed', 'Market universe scanned')
-            setGenerating(false)
-
-            setDraftResult({
-              id: task.strategyId || taskId,
-              name: task.strategyId ? `Strategy ${task.strategyId.slice(0, 8)}` : 'AI Generated Strategy',
-              status: 'Draft',
-              signalDefinition: 'Signal rules generated by Strategy Agent.',
-              entryRules: 'Entry rules defined based on strategy style and universe.',
-              exitRules: 'Exit when signal deteriorates or risk constraint is breached.',
-              rebalanceFrequency: 'Weekly',
-              positionSizing: 'Equal-weight, risk-adjusted',
-              riskConstraints: riskConstraintText,
-              benchmark: universe || 'CSI 300',
-            })
-
-            if (task.strategyId) {
-              onOpenStrategy?.(task.strategyId)
-            }
-            onRefresh?.()
-            if (fallbackInterval) {
-              clearInterval(fallbackInterval)
-              fallbackInterval = null
-            }
-          } else if (task.status === 'failed') {
-            updateTrace('backtest', 'failed', task.error || 'Generation failed')
-            setGenerating(false)
-            onRefresh?.()
-            if (fallbackInterval) {
-              clearInterval(fallbackInterval)
-              fallbackInterval = null
-            }
-          }
-        } catch (e) {
-          console.error('Fallback poll error:', e)
-        }
-      }, 3000)
     }
 
     connectWs()
 
-    // Safety net: start fallback polling after 15s even if WebSocket is connected but stuck
-    fallbackTimeout = setTimeout(() => {
-      if (!closed && !fallbackInterval) {
-        startFallback()
-      }
-    }, 15000)
-
     return () => {
       closed = true
+      clearPoll()
       if (wsRef.current) {
         wsRef.current.close()
         wsRef.current = null
       }
-      if (fallbackInterval) clearInterval(fallbackInterval)
-      if (fallbackTimeout) clearTimeout(fallbackTimeout)
     }
-  }, [generating, taskId, onRefresh, onOpenStrategy, riskConstraintText, universe])
+  }, [
+    generating,
+    taskId,
+    onRefresh,
+    onOpenStrategy,
+    riskConstraintText,
+    universe,
+    buildDraftFromStrategyDetail,
+  ])
 
   const handleGenerate = async () => {
     if (!nlBrief.trim()) return
