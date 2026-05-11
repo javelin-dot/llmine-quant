@@ -3,12 +3,13 @@ import { useStrategy } from '../../contexts/StrategyContext'
 
 type SortKey = 'annualReturn' | 'maxDd' | 'sharpe' | 'oosScore' | 'name'
 type SortDir = 'asc' | 'desc'
-type StatusFilter = 'all' | 'live' | 'paper' | 'backtest' | 'draft'
+type StatusFilter = 'all' | 'live' | 'paper' | 'backtest' | 'backtesting' | 'draft'
 
 const STATUS_META: Record<string, { label: string; tone: string }> = {
   live: { label: 'Live', tone: 'green' },
   paper: { label: 'Paper', tone: 'yellow' },
   backtest: { label: 'Backtest', tone: 'blue' },
+  backtesting: { label: '回测中', tone: 'purple' },
   draft: { label: 'Draft', tone: 'gray' },
 }
 
@@ -17,6 +18,7 @@ const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
   { id: 'live', label: 'Live' },
   { id: 'paper', label: 'Paper' },
   { id: 'backtest', label: 'Backtest' },
+  { id: 'backtesting', label: '回测中' },
   { id: 'draft', label: 'Draft' },
 ]
 
