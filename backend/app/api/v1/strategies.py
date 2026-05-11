@@ -65,17 +65,17 @@ def _task_out(task: StrategyTask) -> StrategyTaskOut:
         id=task.id,
         prompt=task.prompt,
         market=task.market,
-        risk_profile=task.risk_profile,
+        riskProfile=task.risk_profile,
         status=task.status,
         statusTone=tones.get(task.status, "gray"),
         progress=progress,
         stage=stage,
-        strategy_id=task.strategy_id,
-        agent_task_id=task.agent_task_id,
+        strategyId=task.strategy_id,
+        agentTaskId=task.agent_task_id,
         result=task.result,
         error=task.error,
-        created_at=task.created_at.isoformat() if task.created_at else "",
-        updated_at=task.updated_at.isoformat() if task.updated_at else "",
+        createdAt=task.created_at.isoformat() if task.created_at else "",
+        updatedAt=task.updated_at.isoformat() if task.updated_at else "",
     )
 
 
@@ -86,13 +86,13 @@ def _list_item(s: Strategy) -> StrategyListItem:
         family=s.family,
         type=s.type,
         status=s.status,
-        risk_profile=s.risk_profile,
+        riskProfile=s.risk_profile,
         market=s.market,
         sharpe=s.sharpe,
-        max_dd=s.max_dd,
-        annual_return=s.annual_return,
-        oos_score=s.oos_score,
-        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+        maxDd=s.max_dd,
+        annualReturn=s.annual_return,
+        oosScore=s.oos_score,
+        updatedAt=s.updated_at.isoformat() if s.updated_at else "",
     )
 
 
@@ -101,22 +101,22 @@ def _version_out(v: StrategyVersion) -> StrategyVersionOut:
         id=v.id,
         version=v.version,
         status=v.status,
-        code_text=v.code_text,
-        params_schema=v.params_schema,
-        risk_rules=v.risk_rules,
-        created_at=v.created_at.isoformat() if v.created_at else "",
+        codeText=v.code_text,
+        paramsSchema=v.params_schema,
+        riskRules=v.risk_rules,
+        createdAt=v.created_at.isoformat() if v.created_at else "",
     )
 
 
 def _event_out(e: PipelineEvent) -> PipelineEventOut:
     return PipelineEventOut(
         id=e.id,
-        strategy_id=e.strategy_id,
+        strategyId=e.strategy_id,
         stage=e.stage,
         event=e.event,
         progress=e.progress,
         detail=e.detail,
-        created_at=e.created_at.isoformat() if e.created_at else "",
+        createdAt=e.created_at.isoformat() if e.created_at else "",
     )
 
 
@@ -464,19 +464,19 @@ async def get_strategy(
         type=strategy.type,
         status=strategy.status,
         description=strategy.description,
-        risk_profile=strategy.risk_profile,
+        riskProfile=strategy.risk_profile,
         market=strategy.market,
         universe=strategy.universe,
         frequency=strategy.frequency,
-        owner_id=strategy.owner_id,
+        ownerId=strategy.owner_id,
         sharpe=strategy.sharpe,
-        max_dd=strategy.max_dd,
-        annual_return=strategy.annual_return,
-        oos_score=strategy.oos_score,
-        created_at=strategy.created_at.isoformat() if strategy.created_at else "",
-        updated_at=strategy.updated_at.isoformat() if strategy.updated_at else "",
+        maxDd=strategy.max_dd,
+        annualReturn=strategy.annual_return,
+        oosScore=strategy.oos_score,
+        createdAt=strategy.created_at.isoformat() if strategy.created_at else "",
+        updatedAt=strategy.updated_at.isoformat() if strategy.updated_at else "",
         versions=versions,
-        recent_events=events,
+        recentEvents=events,
     )
 
 
