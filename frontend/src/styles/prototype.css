@@ -2252,6 +2252,17 @@ h2 {
   color: var(--text);
   white-space: nowrap;
 }
+.matrix-row-highlight {
+  animation: rowHighlightPulse 2s ease-in-out infinite;
+  background: rgba(76, 141, 255, 0.08);
+}
+.matrix-row-highlight td:first-child {
+  border-left: 3px solid var(--blue);
+}
+@keyframes rowHighlightPulse {
+  0%, 100% { background: rgba(76, 141, 255, 0.06); }
+  50% { background: rgba(76, 141, 255, 0.14); }
+}
 
 .td-name strong { font-weight: 850; letter-spacing: -0.01em; color: var(--text); }
 .td-family { color: var(--muted); }
@@ -2416,6 +2427,15 @@ h2 {
   background: rgba(255,255,255,.04);
   border-color: rgba(255,255,255,.18);
   box-shadow: 0 12px 28px rgba(0,0,0,.22);
+}
+.pipeline-ticket-highlight {
+  animation: ticketHighlightPulse 2s ease-in-out infinite;
+  border-color: rgba(76, 141, 255, 0.55);
+  box-shadow: 0 0 18px rgba(76, 141, 255, 0.18);
+}
+@keyframes ticketHighlightPulse {
+  0%, 100% { box-shadow: 0 0 14px rgba(76, 141, 255, 0.14); }
+  50% { box-shadow: 0 0 26px rgba(76, 141, 255, 0.28); }
 }
 
 .pipeline-ticket-head {

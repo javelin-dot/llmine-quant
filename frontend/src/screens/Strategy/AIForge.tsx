@@ -12,9 +12,10 @@ const RISK_FILTERS: { id: 'all' | 'conservative' | 'balanced' | 'aggressive'; la
 interface AIForgeProps {
   onModal?: (target: string) => void
   onRefresh?: () => void
+  onOpenStrategy?: (id: string) => void
 }
 
-export default function AIForge({ onRefresh }: AIForgeProps) {
+export default function AIForge({ onRefresh, onOpenStrategy }: AIForgeProps) {
   const data = useStrategy()
   const [prompt, setPrompt] = useState(data.nlPrompt)
   const [risk, setRisk] = useState<'all' | 'conservative' | 'balanced' | 'aggressive'>('all')
@@ -73,6 +74,12 @@ export default function AIForge({ onRefresh }: AIForgeProps) {
             return [item, ...prev]
           })
 
+          if (msg.stage === 'done') {
+            if (msg.detail?.strategyId) {
+              onOpenStrategy?.(msg.detail.strategyId)
+            }
+          }
+
           if (msg.stage === 'done' || msg.stage === 'failed') {
             setGenerating(false)
             onRefresh?.()
@@ -107,6 +114,9 @@ export default function AIForge({ onRefresh }: AIForgeProps) {
           setLiveFeed(feed)
           if (task.status === 'succeeded' || task.status === 'failed') {
             setGenerating(false)
+            if (task.status === 'succeeded' && task.strategyId) {
+              onOpenStrategy?.(task.strategyId)
+            }
             onRefresh?.()
             if (fallbackInterval) {
               clearInterval(fallbackInterval)

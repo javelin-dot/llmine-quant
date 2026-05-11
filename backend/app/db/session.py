@@ -7,11 +7,11 @@ from app.core.logging import get_logger
 
 logger = get_logger("db")
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.database_echo,
-    future=True,
-)
+_engine_kw: dict = {"echo": settings.database_echo, "future": True}
+if settings.database_url.startswith("sqlite"):
+    _engine_kw["connect_args"] = {"check_same_thread": False}
+
+engine = create_async_engine(settings.database_url, **_engine_kw)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

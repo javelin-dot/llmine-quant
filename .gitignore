@@ -56,6 +56,9 @@ venv/
 ENV/
 env/
 
+# Local SQLite dev database (see backend/.env.example)
+backend/dev.db
+
 # Environment and secrets (do not commit API keys)
 .env
 .env.*

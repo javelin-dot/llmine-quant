@@ -16,6 +16,7 @@ interface StrategyProps {
 export default function Strategy({ onNavigate, onModal }: StrategyProps) {
   const [data, setData] = useState<MockData['strategy'] | null>(null)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
+  const [lastCreatedId, setLastCreatedId] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     api.strategy.overview()
@@ -27,20 +28,34 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
     refresh()
   }, [])
 
+  const handleOpenStrategy = useCallback((id: string) => {
+    setSelectedStrategyId(id)
+    if (id === lastCreatedId) {
+      setLastCreatedId(null)
+    }
+  }, [lastCreatedId])
+
+  const handleCreateOpenStrategy = useCallback((id: string) => {
+    setLastCreatedId(id)
+    setSelectedStrategyId(id)
+  }, [])
+
   if (!data) return <div className="strategy-root">Loading Strategy…</div>
 
   return (
     <StrategyProvider value={data}>
       <div className="strategy-root">
         <PipelineRibbon />
-        <AIForge onModal={onModal} onRefresh={refresh} />
+        <AIForge onModal={onModal} onRefresh={refresh} onOpenStrategy={handleCreateOpenStrategy} />
         <StrategyMatrix
           onNavigate={onNavigate}
-          onOpenStrategy={(id) => setSelectedStrategyId(id)}
+          onOpenStrategy={handleOpenStrategy}
+          highlightId={lastCreatedId}
         />
         <PipelineBoard
           onNavigate={onNavigate}
-          onOpenStrategy={(id) => setSelectedStrategyId(id)}
+          onOpenStrategy={handleOpenStrategy}
+          highlightId={lastCreatedId}
         />
       </div>
       {selectedStrategyId && (

@@ -3,6 +3,7 @@ import { useStrategy } from '../../contexts/StrategyContext'
 interface PipelineBoardProps {
   onNavigate?: (target: string) => void
   onOpenStrategy?: (id: string) => void
+  highlightId?: string | null
 }
 
 function tagClass(c?: string) {
@@ -10,7 +11,7 @@ function tagClass(c?: string) {
   return `tag ${c}`
 }
 
-export default function PipelineBoard({ onOpenStrategy }: PipelineBoardProps) {
+export default function PipelineBoard({ onOpenStrategy, highlightId }: PipelineBoardProps) {
   const data = useStrategy()
   return (
     <div className="pipeline-board-wrap">
@@ -40,7 +41,7 @@ export default function PipelineBoard({ onOpenStrategy }: PipelineBoardProps) {
             <div className="pipeline-lane-body">
               {lane.tickets.map((t) => (
                 <button
-                  className={`pipeline-ticket ticket-${lane.tone}`}
+                  className={`pipeline-ticket ticket-${lane.tone} ${t.id === highlightId ? 'pipeline-ticket-highlight' : ''}`}
                   key={t.id}
                   onClick={() => onOpenStrategy?.(t.id)}
                 >

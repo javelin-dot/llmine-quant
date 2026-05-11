@@ -52,10 +52,10 @@
       position: fixed;
       inset: 0;
       background-image:
-        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
-      background-size: 52px 52px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,.75), transparent 90%);
+        linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.010) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.55), transparent 85%);
       pointer-events: none;
       z-index: 0;
     }
@@ -322,74 +322,68 @@
     .hero {
       position: relative;
       overflow: hidden;
-      padding: 34px;
-      border: 1px solid rgba(255, 255, 255, 0.11);
-      border-radius: 34px;
-      background:
-        radial-gradient(circle at 82% 12%, rgba(66, 232, 255, 0.17), transparent 34%),
-        radial-gradient(circle at 55% 80%, rgba(169, 139, 255, 0.18), transparent 35%),
-        linear-gradient(135deg, rgba(255,255,255,.09), rgba(255,255,255,.035));
+      padding: 72px 64px 80px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 28px;
+      background: linear-gradient(145deg, #070912 0%, #090c18 50%, #0b0f1c 100%);
+      backdrop-filter: blur(20px);
       box-shadow: var(--shadow);
     }
 
-    .hero::after {
-      content: "";
-      position: absolute;
-      right: -90px;
-      top: -80px;
-      width: 360px;
-      height: 360px;
-      border-radius: 50%;
-      background: conic-gradient(from 160deg, rgba(66,232,255,.1), rgba(76,141,255,.25), rgba(169,139,255,.14), rgba(66,232,255,.1));
-      filter: blur(1px);
-      opacity: .9;
-    }
-
-    .hero-inner { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.3fr) 460px; gap: 24px; }
+    .hero-inner { position: relative; z-index: 2; max-width: 860px; }
 
     .eyebrow {
       display: inline-flex;
       align-items: center;
-      gap: 9px;
-      padding: 8px 11px;
-      border-radius: 999px;
-      border: 1px solid rgba(66, 232, 255, 0.22);
-      color: #baf8ff;
-      background: rgba(66, 232, 255, 0.07);
-      font-size: 12px;
-      font-weight: 850;
+      gap: 10px;
+      color: var(--subtle);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
     }
 
     h2 {
-      margin: 18px 0 10px;
-      font-size: clamp(34px, 4.2vw, 64px);
-      line-height: .94;
-      letter-spacing: -0.07em;
+      margin: 20px 0 32px;
+      font-size: clamp(40px, 5.2vw, 72px);
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+      font-weight: 650;
+    }
+    .hero-line { display: block; }
+    .hero-line:first-child {
+      margin-bottom: 8px;
+      color: #7a879f;
+    }
+    .hero-line:last-child {
+      color: var(--text);
     }
 
-    .gradient-text {
-      background: linear-gradient(135deg, #fff, #8fefff 45%, #b79bff);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-
-    .hero p {
-      max-width: 760px;
+    .hero-sub {
+      max-width: 640px;
       margin: 0;
-      color: #a8b4cf;
-      line-height: 1.75;
+      color: #6e7d9b;
+      line-height: 1.7;
       font-size: 15px;
+      font-weight: 400;
+    }
+    .hero-sub + .hero-sub {
+      margin-top: 10px;
+      color: #58657a;
+      font-size: 13.5px;
+      line-height: 1.65;
     }
 
-    .hero-actions { margin-top: 26px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .hero-actions { margin-top: 42px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
 
     .ai-card {
       border: 1px solid var(--line);
       background: rgba(4, 7, 16, 0.48);
       border-radius: 28px;
-      padding: 18px;
+      padding: 22px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+      min-width: 0;
     }
 
     .ai-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 16px; }
@@ -767,8 +761,8 @@
       .brand h1, .nav button span:not(.nav-ico), .nav-section-title, .side-card { display: none; }
       .brand { justify-content:center; padding-left: 0; padding-right: 0; }
       .nav button { justify-content:center; }
-      .hero-inner, .grid-main, .command-panel { grid-template-columns: 1fr; }
       .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .hero { padding: 48px 40px; }
     }
 
     @media (max-width: 860px) {
@@ -777,7 +771,10 @@
       main { padding: 16px 14px 96px; }
       .topbar { align-items: stretch; flex-direction: column; }
       .top-actions { overflow-x: auto; padding-bottom: 4px; }
-      .hero { padding: 22px; border-radius: 26px; }
+      .hero { padding: 36px 24px; border-radius: 24px; }
+      .hero-inner { max-width: 100%; }
+      h2 { font-size: clamp(28px, 6vw, 40px); }
+      .status-grid { grid-template-columns: 1fr 1fr; }
       .grid-4, .grid-3, .grid-2, .split, .wizard-grid, .kanban, .scenario-grid, .lineage-flow { grid-template-columns: 1fr; }
       .mobile-tabs {
         position: fixed;
@@ -797,6 +794,113 @@
       .mobile-tabs button { border:0; border-radius:16px; background:transparent; color:var(--muted); padding:10px 6px; }
       .mobile-tabs button.active { background:rgba(76,141,255,.18); color:white; }
     }
+
+    /* Toast notifications */
+    .toast-container {
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      padding: 14px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.1);
+      background: var(--panel-strong);
+      backdrop-filter: blur(24px);
+      box-shadow: 0 20px 60px rgba(0,0,0,.4);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 650;
+      min-width: 260px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      animation: toastIn .3s ease, toastOut .3s ease 2.7s forwards;
+      opacity: 0;
+    }
+    .toast.success { border-color: rgba(79, 240, 162, .3); }
+    .toast.error { border-color: rgba(255, 92, 124, .3); }
+    .toast.warn { border-color: rgba(255, 209, 102, .3); }
+    @keyframes toastIn { from { opacity:0; transform: translateX(40px); } to { opacity:1; transform: none; } }
+    @keyframes toastOut { from { opacity:1; transform: none; } to { opacity:0; transform: translateX(40px); } }
+
+    /* Chart tooltip */
+    .chart-tooltip {
+      position: absolute;
+      pointer-events: none;
+      padding: 10px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: var(--panel-strong);
+      backdrop-filter: blur(16px);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+      box-shadow: 0 12px 40px rgba(0,0,0,.35);
+      opacity: 0;
+      transition: opacity .15s ease;
+      z-index: 10;
+    }
+    .chart-tooltip.show { opacity: 1; }
+
+    /* Search glow on focus */
+    .search:focus-within {
+      border-color: rgba(66, 232, 255, .35);
+      box-shadow: 0 0 0 4px rgba(66, 232, 255, .08), inset 0 1px 0 rgba(255,255,255,.04);
+    }
+
+    /* Agent running progress overlay */
+    .agent-progress {
+      display: none;
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(66, 232, 255, .18);
+      background: rgba(0,0,0,.2);
+    }
+    .agent-progress.show { display: block; animation: fade .3s ease; }
+    .agent-progress-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .agent-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+      transition: width .3s ease;
+    }
+    .agent-progress-steps {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .agent-progress-steps span.active { color: var(--cyan); font-weight: 800; }
+
+    /* Approval card states */
+    .approval-card.approved { border-color: rgba(79, 240, 162, .35); opacity: .7; }
+    .approval-card.rejected { border-color: rgba(255, 92, 124, .35); opacity: .6; }
+    .approval-card .state-badge {
+      display: none;
+      margin-bottom: 10px;
+      font-size: 12px;
+      font-weight: 850;
+    }
+    .approval-card.approved .state-badge { display: block; color: var(--green); }
+    .approval-card.rejected .state-badge { display: block; color: var(--red); }
+    .approval-card.approved .approval-actions,
+    .approval-card.rejected .approval-actions { display: none; }
   </style>
 </head>
 <body>
@@ -857,25 +961,12 @@
           <div class="hero-inner">
             <div>
               <span class="eyebrow">AI-First Quant Operating System</span>
-              <h2><span class="gradient-text">AI 作为主力，</span><br/>人类只审批关键交易。</h2>
-              <p>面向交易员、投资者与风控团队的一体化量化平台。Agent 自动完成策略研究、行情接入、回测验证、模拟盘部署、组合优化、实盘交易草案、解释血缘、风控约束与审计追踪；人类仅在交易、资金、风控放宽或不确定性场景中介入。</p>
+              <h2><span class="hero-line">AI 驱动量化流程，</span><span class="hero-line">人类掌控关键交易。</span></h2>
+              <p class="hero-sub">机构级 AI 量化操作系统，覆盖研究、回测、压力测试、可解释性、模拟交易与审计追踪。</p>
+              <p class="hero-sub">所有交易、资金变动与风控边界例外，均需人工审批或重点复核。</p>
               <div class="hero-actions">
                 <button class="btn" onclick="openModal('create')">启动 AI 策略任务</button>
                 <button class="btn secondary" onclick="switchScreen('execution')">查看待审批交易</button>
-                <button class="btn secondary" onclick="switchScreen('audit')">查看 Agent 决策轨迹</button>
-              </div>
-            </div>
-            <div class="ai-card">
-              <div class="ai-card-head">
-                <div class="ai-card-title">Live Agent Swarm</div>
-                <span class="status-chip">7 Agents Active</span>
-              </div>
-              <div class="agent-stack">
-                <div class="agent-row"><div class="agent-avatar">研</div><div><strong>Research Agent</strong><small>正在扫描 BTC/ETH/SOL 市场结构</small></div><div class="metric">97%</div></div>
-                <div class="agent-row"><div class="agent-avatar">策</div><div><strong>Strategy Agent</strong><small>生成 ATR 趋势突破 v19 草案</small></div><div class="metric">84%</div></div>
-                <div class="agent-row"><div class="agent-avatar">测</div><div><strong>Backtest Agent</strong><small>样本外验证 2024-2026 数据</small></div><div class="metric">RUN</div></div>
-                <div class="agent-row"><div class="agent-avatar">险</div><div><strong>Risk Agent</strong><small>拦截 1 个高杠杆调仓提案</small></div><div class="metric">A-</div></div>
-                <div class="agent-row"><div class="agent-avatar">执</div><div><strong>Execution Agent</strong><small>等待 3 个实盘订单确认</small></div><div class="metric">3</div></div>
               </div>
             </div>
           </div>
@@ -898,7 +989,8 @@
         <div class="grid-main">
           <div class="card">
             <div class="card-head"><h4>Portfolio Equity Curve</h4><span>AI managed · paper + live</span></div>
-            <div class="chart">
+            <div class="chart" id="equityChart">
+              <div class="chart-tooltip" id="chartTooltip"></div>
               <svg viewBox="0 0 900 300" preserveAspectRatio="none" aria-label="资金曲线图">
                 <g class="chart-grid">
                   <line x1="0" y1="50" x2="900" y2="50"/><line x1="0" y1="110" x2="900" y2="110"/><line x1="0" y1="170" x2="900" y2="170"/><line x1="0" y1="230" x2="900" y2="230"/>
@@ -934,8 +1026,18 @@
             <span class="eyebrow">Natural Language Strategy Builder</span>
             <h2 style="font-size:42px;margin-bottom:12px">一句话生成可回测策略</h2>
             <div class="prompt-box">
-              <textarea>创建一个偏激进的 BTC/ETH 趋势策略，目标年化 30%，最大回撤不超过 20%，先跑过去 3 年数据，自动做样本外验证和模拟盘部署计划。</textarea>
-              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px"><button class="btn secondary">保存为模板</button><button class="btn">让 Agent 开始</button></div>
+              <textarea id="strategyPrompt">创建一个偏激进的 BTC/ETH 趋势策略，目标年化 30%，最大回撤不超过 20%，先跑过去 3 年数据，自动做样本外验证和模拟盘部署计划。</textarea>
+              <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px"><button class="btn secondary" onclick="toast('模板已保存','success')">保存为模板</button><button class="btn" id="btnStartAgent" onclick="startAgentTask()">让 Agent 开始</button></div>
+            </div>
+            <div id="agentProgress" class="agent-progress">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <strong style="font-size:13px">Agent Task Running...</strong>
+                <span id="agentProgressPct" style="font-size:12px;color:var(--muted)">0%</span>
+              </div>
+              <div class="agent-progress-bar"><div id="agentProgressFill" class="agent-progress-fill"></div></div>
+              <div class="agent-progress-steps" id="agentSteps">
+                <span>解析目标</span><span>生成策略</span><span>静态检查</span><span>回测</span><span>风控评估</span><span>完成</span>
+              </div>
             </div>
             <div class="wizard-grid">
               <div class="choice"><strong>风险偏好</strong><small>保守 / 平衡 / 激进 / 自定义资金约束</small></div>
@@ -968,7 +1070,7 @@
       <section id="backtest" class="screen">
         <div class="section-title">
           <div><h3>回测实验室</h3><p>AI 自动完成样本内、样本外、Walk-forward、Scenario Analysis、手续费/滑点敏感性分析。</p></div>
-          <button class="btn">启动批量回测</button>
+          <button class="btn" id="btnBatchBacktest" onclick="startBatchBacktest()">启动批量回测</button>
         </div>
         <div class="grid-4">
           <div class="card kpi"><small>Best Annualized</small><strong>31.8%</strong><div class="trend">样本外 24.6%</div></div>
@@ -1000,8 +1102,6 @@
             </div>
           </div>
         </div>
-      </section>
-
 
         <div class="section-title"><div><h3>Scenario Analysis 极端场景压力测试</h3><p>不只看收益指标，而是验证策略在黑天鹅、流动性和基础设施异常下的可执行性。</p></div></div>
         <div class="card">
@@ -1017,12 +1117,12 @@
             </tbody>
           </table>
         </div>
-
+      </section>
 
       <section id="explain" class="screen">
         <div class="section-title">
           <div><h3>解释与血缘</h3><p>把 AI 的交易建议拆成信号贡献、规则命中、数据来源、偏差检查与可复现链路。</p></div>
-          <button class="btn secondary">导出解释报告</button>
+          <button class="btn secondary" onclick="toast('解释报告已导出，包含信号归因、血缘链路和置信度拆解', 'success')">导出解释报告</button>
         </div>
         <div class="grid-main">
           <div class="card pad">
@@ -1090,7 +1190,7 @@
       <section id="portfolio" class="screen">
         <div class="section-title">
           <div><h3>组合驾驶舱</h3><p>Portfolio Agent 自动进行资金分配、相关性控制、风险预算与调仓建议。</p></div>
-          <button class="btn">生成组合优化方案</button>
+          <button class="btn" onclick="toast('Portfolio Agent 正在生成组合优化方案...', 'info')">生成组合优化方案</button>
         </div>
         <div class="grid-3">
           <div class="card pad"><div class="gauge" style="--p:72" data-label="72%"></div><h4>风险预算使用率</h4><p style="color:var(--muted)">距离组合最大回撤预算仍有缓冲。</p></div>
@@ -1125,29 +1225,32 @@
       <section id="execution" class="screen">
         <div class="section-title">
           <div><h3>交易审批中心</h3><p>Execution Agent 生成订单草案，人类只确认交易、资金变更和不确定性动作。</p></div>
-          <button class="btn secondary">审批规则设置</button>
+          <button class="btn secondary" onclick="toast('审批规则设置面板开发中，当前使用默认 L0-L5 权限模型', 'warn')">审批规则设置</button>
         </div>
         <div class="grid-3">
-          <div class="approval-card">
+          <div class="approval-card" id="approval-1">
             <span class="tag yellow">需要确认</span>
+            <div class="state-badge">✓ 已批准执行</div>
             <h4 style="margin-top:12px">买入 BTC/USDT</h4>
             <p>4H 趋势突破，ATR 波动率可接受，策略 v19 触发买入信号。</p>
             <div class="approval-grid"><div class="approval-metric"><small>金额</small><strong>资金 2%</strong></div><div class="approval-metric"><small>限价</small><strong>卖一 +0.05%</strong></div><div class="approval-metric"><small>止损</small><strong>-4%</strong></div><div class="approval-metric"><small>评分</small><strong>A-</strong></div></div>
-            <div style="display:flex;gap:10px"><button class="btn success" onclick="openModal('approve')">批准</button><button class="btn secondary">拒绝</button></div>
+            <div class="approval-actions" style="display:flex;gap:10px"><button class="btn success" onclick="approveTrade('approval-1', true)">批准</button><button class="btn secondary" onclick="approveTrade('approval-1', false)">拒绝</button></div>
           </div>
-          <div class="approval-card">
+          <div class="approval-card" id="approval-2">
             <span class="tag yellow">需要确认</span>
+            <div class="state-badge">✗ 已拒绝</div>
             <h4 style="margin-top:12px">卖出 ETH 20%</h4>
             <p>Risk Agent 检测 ETH 策略近期回撤扩大，建议减仓控制组合暴露。</p>
             <div class="approval-grid"><div class="approval-metric"><small>金额</small><strong>仓位 20%</strong></div><div class="approval-metric"><small>原因</small><strong>降风险</strong></div><div class="approval-metric"><small>影响</small><strong>DD -1.8%</strong></div><div class="approval-metric"><small>评分</small><strong>B+</strong></div></div>
-            <div style="display:flex;gap:10px"><button class="btn success" onclick="openModal('approve')">批准</button><button class="btn secondary">拒绝</button></div>
+            <div class="approval-actions" style="display:flex;gap:10px"><button class="btn success" onclick="approveTrade('approval-2', true)">批准</button><button class="btn secondary" onclick="approveTrade('approval-2', false)">拒绝</button></div>
           </div>
-          <div class="approval-card">
+          <div class="approval-card" id="approval-3">
             <span class="tag red">不确定性</span>
+            <div class="state-badge">⏸ 已暂停</div>
             <h4 style="margin-top:12px">SOL 策略暂停</h4>
             <p>行情源之间价格偏差超过阈值，AI 无法确认真实成交价格，建议暂停新开仓。</p>
             <div class="approval-grid"><div class="approval-metric"><small>Confidence</small><strong>0.68</strong></div><div class="approval-metric"><small>数据质量</small><strong>82</strong></div><div class="approval-metric"><small>动作</small><strong>暂停</strong></div><div class="approval-metric"><small>级别</small><strong>P1</strong></div></div>
-            <div style="display:flex;gap:10px"><button class="btn danger" onclick="openModal('pause')">暂停</button><button class="btn secondary">转人工</button></div>
+            <div class="approval-actions" style="display:flex;gap:10px"><button class="btn danger" onclick="pauseStrategy('approval-3')">暂停</button><button class="btn secondary" onclick="approveTrade('approval-3', false)">转人工</button></div>
           </div>
         </div>
       </section>
@@ -1186,7 +1289,7 @@
       <section id="data" class="screen">
         <div class="section-title">
           <div><h3>行情与数据合规</h3><p>Data Agent 自动选择数据源、检查质量、记录使用范围、偏差风险和实盘许可边界。</p></div>
-          <button class="btn">新增数据源</button>
+          <button class="btn" onclick="toast('请配置数据源的 API Key、Endpoint 和许可范围', 'info')">新增数据源</button>
         </div>
         <div class="grid-3">
           <div class="card pad"><h4>免费研究层</h4><p style="color:var(--muted)">AKShare / CCXT 公共数据，仅用于研究、学习、回测。</p><span class="tag green">Research Only</span></div>
@@ -1234,7 +1337,7 @@
       <section id="security" class="screen">
         <div class="section-title">
           <div><h3>资金安全</h3><p>AI 不接触密钥、不拥有资金权限，交易执行通过 Vault/KMS 与最小权限 API 完成。</p></div>
-          <button class="btn secondary">密钥轮换</button>
+          <button class="btn secondary" onclick="toast('密钥轮换流程已启动，新密钥将通过 Vault 下发', 'success')">密钥轮换</button>
         </div>
         <div class="grid-4">
           <div class="card kpi"><small>明文密钥暴露</small><strong>0</strong><div class="trend">Vault 托管</div></div>
@@ -1266,7 +1369,7 @@
       <section id="collaboration" class="screen">
         <div class="section-title">
           <div><h3>协作实验室</h3><p>面向研究员、交易员、风控员和合规人员的策略协作、版本 Diff、A/B Testing 与上线评审。</p></div>
-          <button class="btn">创建评审任务</button>
+          <button class="btn" onclick="toast('评审任务已创建，已通知研究员、交易员和风控员', 'success')">创建评审任务</button>
         </div>
         <div class="grid-4">
           <div class="card kpi"><small>Research Threads</small><strong>18</strong><div class="trend">6 个活跃讨论</div></div>
@@ -1303,7 +1406,7 @@
       <section id="audit" class="screen">
         <div class="section-title">
           <div><h3>审计追踪</h3><p>每次 Agent 计划、工具调用、风控判断、审批、交易执行均可追溯。</p></div>
-          <button class="btn">导出审计报告</button>
+          <button class="btn" onclick="toast('审计报告正在生成并下载...', 'success')">导出审计报告</button>
         </div>
         <div class="card">
           <div class="card-head"><h4>Decision Trace</h4><span>Immutable audit log</span></div>
@@ -1327,6 +1430,8 @@
       </section>
     </main>
   </div>
+
+  <div class="toast-container" id="toastContainer"></div>
 
   <div class="mobile-tabs">
     <button class="nav-btn active" data-target="dashboard">⌘</button>
@@ -1413,6 +1518,162 @@
         openModal('create');
       }
     });
+
+    /* Toast notification system */
+    function toast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const el = document.createElement('div');
+      el.className = `toast ${type}`;
+      const icon = type === 'success' ? '✓' : type === 'error' ? '✗' : type === 'warn' ? '!' : 'ℹ';
+      el.innerHTML = `<span style="font-size:16px">${icon}</span><span>${message}</span>`;
+      container.appendChild(el);
+      setTimeout(() => el.remove(), 3000);
+    }
+
+    /* Agent task simulation */
+    function startAgentTask() {
+      const btn = document.getElementById('btnStartAgent');
+      const box = document.getElementById('agentProgress');
+      const fill = document.getElementById('agentProgressFill');
+      const pct = document.getElementById('agentProgressPct');
+      const steps = document.getElementById('agentSteps').querySelectorAll('span');
+      if (btn.dataset.running === '1') return;
+      btn.dataset.running = '1';
+      btn.textContent = 'Agent 运行中...';
+      btn.classList.add('secondary');
+      box.classList.add('show');
+      toast('Strategy Agent 已启动，正在解析目标...', 'info');
+      let progress = 0;
+      const stepMarks = [0, 18, 35, 55, 78, 100];
+      const interval = setInterval(() => {
+        progress += Math.random() * 8 + 2;
+        if (progress > 100) progress = 100;
+        fill.style.width = progress + '%';
+        pct.textContent = Math.floor(progress) + '%';
+        steps.forEach((s, i) => s.classList.toggle('active', progress >= stepMarks[i]));
+        if (progress >= 100) {
+          clearInterval(interval);
+          btn.dataset.running = '0';
+          btn.textContent = '让 Agent 开始';
+          btn.classList.remove('secondary');
+          setTimeout(() => box.classList.remove('show'), 800);
+          toast('Agent 任务完成：已生成 5 个候选策略，2 个通过安全检查', 'success');
+        }
+      }, 300);
+    }
+
+    /* Batch backtest simulation */
+    function startBatchBacktest() {
+      const btn = document.getElementById('btnBatchBacktest');
+      if (btn.dataset.running === '1') return;
+      btn.dataset.running = '1';
+      const originalText = btn.textContent;
+      btn.textContent = '批量回测运行中...';
+      btn.classList.add('secondary');
+      toast('Backtest Agent 启动批量回测，64 组参数搜索...', 'info');
+      setTimeout(() => {
+        btn.dataset.running = '0';
+        btn.textContent = originalText;
+        btn.classList.remove('secondary');
+        toast('批量回测完成：ATR-Trend-v19 为最优候选', 'success');
+      }, 2500);
+    }
+
+    /* Trade approval state toggle */
+    function approveTrade(id, approved) {
+      const card = document.getElementById(id);
+      if (!card) return;
+      card.classList.remove('approved', 'rejected');
+      card.classList.add(approved ? 'approved' : 'rejected');
+      toast(approved ? '交易已批准，Execution Agent 将发送订单' : '交易已拒绝，已通知 Risk Agent', approved ? 'success' : 'warn');
+    }
+
+    function pauseStrategy(id) {
+      const card = document.getElementById(id);
+      if (!card) return;
+      card.classList.remove('approved', 'rejected');
+      card.classList.add('approved');
+      toast('策略已暂停，新信号冻结，保留已有持仓处理规则', 'success');
+    }
+
+    /* KPI number animation on first view */
+    function animateValue(el, start, end, duration, suffix = '') {
+      const range = end - start;
+      const startTime = performance.now();
+      function step(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const current = start + range * ease;
+        if (Number.isInteger(end)) {
+          el.textContent = Math.floor(current) + suffix;
+        } else {
+          el.textContent = current.toFixed(1) + suffix;
+        }
+        if (progress < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    }
+
+    const kpiObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting && !entry.target.dataset.animated) {
+          entry.target.dataset.animated = '1';
+          const text = entry.target.textContent.trim();
+          const num = parseFloat(text.replace(/[^0-9.]/g, ''));
+          const suffix = text.replace(/[0-9.]/g, '');
+          if (!isNaN(num)) {
+            entry.target.textContent = '0' + suffix;
+            animateValue(entry.target, 0, num, 1200, suffix);
+          }
+        }
+      });
+    }, { threshold: 0.5 });
+
+    document.querySelectorAll('.kpi strong').forEach(el => kpiObserver.observe(el));
+
+    /* Add click-to-copy for lineage hash values */
+    document.querySelectorAll('.lineage-step small').forEach(el => {
+      if (el.textContent.includes('Hash')) {
+        el.style.cursor = 'pointer';
+        el.title = '点击复制';
+        el.addEventListener('click', () => {
+          const hash = el.textContent.match(/[a-f0-9]{4}/i);
+          if (hash) {
+            navigator.clipboard?.writeText(hash[0]);
+            toast('Hash 已复制到剪贴板', 'success');
+          }
+        });
+      }
+    });
+
+    /* Chart hover tooltip */
+    (function setupChartTooltip() {
+      const chart = document.getElementById('equityChart');
+      const tip = document.getElementById('chartTooltip');
+      if (!chart || !tip) return;
+      const values = ['$1.00', '$1.04', '$1.08', '$1.14', '$1.21', '$1.28', '$1.36', '$1.45', '$1.52', '$1.58'];
+      chart.addEventListener('mousemove', (e) => {
+        const rect = chart.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const pct = Math.max(0, Math.min(1, x / rect.width));
+        const idx = Math.floor(pct * (values.length - 1));
+        tip.textContent = values[idx] + ' · +' + (parseFloat(values[idx].replace('$','')) * 100 - 100).toFixed(0) + '%';
+        tip.style.left = (x + 12) + 'px';
+        tip.style.top = (e.clientY - rect.top - 40) + 'px';
+        tip.classList.add('show');
+      });
+      chart.addEventListener('mouseleave', () => tip.classList.remove('show'));
+    })();
+
+    /* Randomly update mini-bars for system health visual */
+    setInterval(() => {
+      document.querySelectorAll('.mini-bars i').forEach(bar => {
+        const h = 18 + Math.floor(Math.random() * 34);
+        bar.style.height = h + 'px';
+        bar.style.transition = 'height .6s ease';
+      });
+    }, 2000);
   </script>
 </body>
 </html>

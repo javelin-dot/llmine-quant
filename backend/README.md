@@ -21,6 +21,14 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 celery -A app.tasks.celery_app worker -l info
 ```
 
+### Local API without Docker (SQLite)
+
+If PostgreSQL is not running, you can point `DATABASE_URL` at a file-backed SQLite database (works well on Windows for UI development):
+
+1. Copy `backend/.env.example` to `backend/.env` (or export variables in your shell).
+2. Keep the line `DATABASE_URL=sqlite+aiosqlite:///./dev.db` and run all commands from the `backend/` directory so `./dev.db` resolves next to the app.
+3. Run `alembic upgrade head`, then `python scripts/seed_dev_data.py`, then `uvicorn` as above. Redis is optional for the HTTP API in the current codebase; use Docker Compose when you need the full stack.
+
 ## Environment Variables
 
 | Variable | Default | Description |
