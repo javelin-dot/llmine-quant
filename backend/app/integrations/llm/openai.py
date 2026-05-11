@@ -17,6 +17,22 @@ class OpenAILLMProvider(LLMProvider):
     name = "openai"
     default_model = "gpt-4o"
 
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout_seconds: int = 120,
+        max_tokens: int = 4096,
+        base_url: str | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            max_tokens=max_tokens,
+        )
+        self.base_url = base_url
+
     def _get_client(self) -> Any:
         try:
             import openai  # type: ignore[import-not-found]
@@ -33,7 +49,13 @@ class OpenAILLMProvider(LLMProvider):
                 details={"provider": self.name},
             )
 
-        return openai.AsyncOpenAI(api_key=self.api_key, timeout=self.timeout_seconds)
+        kwargs: dict[str, Any] = {
+            "api_key": self.api_key,
+            "timeout": self.timeout_seconds,
+        }
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        return openai.AsyncOpenAI(**kwargs)
 
     async def generate(
         self,

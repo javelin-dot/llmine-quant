@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import desc, func, select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tracing import get_actor_id, get_trace_id
+from app.db.base_class import now_utc
 from app.db.session import AsyncSessionLocal, get_db
 from app.domains.agents.models import AgentMessage
 from app.domains.strategy.models import (
@@ -16,6 +18,7 @@ from app.domains.strategy.models import (
     Strategy,
     StrategyTask,
     StrategyTemplate as StrategyTemplateModel,
+    StrategyVersion,
 )
 from app.domains.strategy.schemas import (
     FeedEvent,
@@ -24,13 +27,19 @@ from app.domains.strategy.schemas import (
     PipelineStatus,
     PipelineTicket,
     StrategyCreate,
+    StrategyDetail,
+    StrategyListItem,
+    StrategyListResponse,
     StrategyMatrixRow,
     StrategyScreen,
     StrategyTaskCreate,
     StrategyTaskOut,
     StrategyTemplate,
     StrategyTransition,
+    StrategyUpdate,
+    StrategyVersionOut,
 )
+from app.services.audit_service import AuditService
 from app.services.strategy_generation import StrategyGenerationService
 
 router = APIRouter()
@@ -70,6 +79,47 @@ def _task_out(task: StrategyTask) -> StrategyTaskOut:
     )
 
 
+def _list_item(s: Strategy) -> StrategyListItem:
+    return StrategyListItem(
+        id=s.id,
+        name=s.name,
+        family=s.family,
+        type=s.type,
+        status=s.status,
+        risk_profile=s.risk_profile,
+        market=s.market,
+        sharpe=s.sharpe,
+        max_dd=s.max_dd,
+        annual_return=s.annual_return,
+        oos_score=s.oos_score,
+        updated_at=s.updated_at.isoformat() if s.updated_at else "",
+    )
+
+
+def _version_out(v: StrategyVersion) -> StrategyVersionOut:
+    return StrategyVersionOut(
+        id=v.id,
+        version=v.version,
+        status=v.status,
+        code_text=v.code_text,
+        params_schema=v.params_schema,
+        risk_rules=v.risk_rules,
+        created_at=v.created_at.isoformat() if v.created_at else "",
+    )
+
+
+def _event_out(e: PipelineEvent) -> PipelineEventOut:
+    return PipelineEventOut(
+        id=e.id,
+        strategy_id=e.strategy_id,
+        stage=e.stage,
+        event=e.event,
+        progress=e.progress,
+        detail=e.detail,
+        created_at=e.created_at.isoformat() if e.created_at else "",
+    )
+
+
 async def _run_pipeline_bg(task_id: str) -> None:
     """Background runner with its own session."""
     async with AsyncSessionLocal() as db:
@@ -82,9 +132,13 @@ async def _run_pipeline_bg(task_id: str) -> None:
 @router.get("/overview", response_model=StrategyScreen)
 async def get_strategy_overview(db: AsyncSession = Depends(get_db)) -> StrategyScreen:
     """Return the complete Strategy Factory screen data (DB-driven)."""
-    # Pipeline status counts
+    # Pipeline status counts (exclude soft-deleted rows)
     counts: dict[str, int] = {s: 0 for s in ["research", "backtest", "paper", "live", "paused"]}
-    rows = await db.execute(select(Strategy.status, func.count(Strategy.id)).group_by(Strategy.status))
+    rows = await db.execute(
+        select(Strategy.status, func.count(Strategy.id))
+        .where(Strategy.deleted_at.is_(None))
+        .group_by(Strategy.status)
+    )
     for status, cnt in rows.all():
         if status in counts:
             counts[status] = cnt
@@ -133,8 +187,13 @@ async def get_strategy_overview(db: AsyncSession = Depends(get_db)) -> StrategyS
             )
         )
 
-    # Matrix — last 20 strategies
-    strat_rows = await db.execute(select(Strategy).order_by(Strategy.updated_at.desc()).limit(20))
+    # Matrix — last 20 strategies (exclude soft-deleted)
+    strat_rows = await db.execute(
+        select(Strategy)
+        .where(Strategy.deleted_at.is_(None))
+        .order_by(Strategy.updated_at.desc())
+        .limit(20)
+    )
     strategies = strat_rows.scalars().all()
     matrix = [
         StrategyMatrixRow(
@@ -257,6 +316,44 @@ async def get_strategy_feed(db: AsyncSession = Depends(get_db)) -> list[FeedEven
     return feed
 
 
+@router.get("", response_model=StrategyListResponse)
+@router.get("/", response_model=StrategyListResponse)
+async def list_strategies(
+    status: str | None = Query(default=None, description="Filter by status"),
+    family: str | None = Query(default=None, description="Filter by strategy family"),
+    market: str | None = Query(default=None, description="Filter by market"),
+    q: str | None = Query(default=None, description="Free-text search on name/description"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> StrategyListResponse:
+    """List strategies with optional filters and pagination."""
+    base = select(Strategy).where(Strategy.deleted_at.is_(None))
+    if status:
+        base = base.where(Strategy.status == status)
+    if family:
+        base = base.where(Strategy.family == family)
+    if market:
+        base = base.where(Strategy.market == market)
+    if q:
+        like = f"%{q}%"
+        base = base.where(or_(Strategy.name.ilike(like), Strategy.description.ilike(like)))
+
+    total_row = await db.execute(
+        select(func.count())
+        .select_from(base.subquery())
+    )
+    total = int(total_row.scalar() or 0)
+
+    rows = await db.execute(
+        base.order_by(Strategy.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = [_list_item(s) for s in rows.scalars().all()]
+    return StrategyListResponse(total=total, items=items)
+
+
 @router.post("/{strategy_id}/transition")
 async def transition_strategy(
     strategy_id: str,
@@ -265,7 +362,7 @@ async def transition_strategy(
 ) -> dict[str, str]:
     """Transition a strategy to a new pipeline stage."""
     strategy = await db.get(Strategy, strategy_id)
-    if strategy is None:
+    if strategy is None or strategy.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Strategy not found")
     old_status = strategy.status
     strategy.status = payload.target
@@ -295,18 +392,125 @@ async def get_strategy_events(
         .where(PipelineEvent.strategy_id == strategy_id)
         .order_by(PipelineEvent.created_at.asc())
     )
-    return [
-        PipelineEventOut(
-            id=e.id,
-            strategy_id=e.strategy_id,
-            stage=e.stage,
-            event=e.event,
-            progress=e.progress,
-            detail=e.detail,
-            created_at=e.created_at.isoformat() if e.created_at else "",
+    return [_event_out(e) for e in rows.scalars().all()]
+
+
+@router.get("/{strategy_id}", response_model=StrategyDetail)
+async def get_strategy(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> StrategyDetail:
+    """Return strategy detail with versions and recent pipeline events."""
+    strategy = await db.get(Strategy, strategy_id)
+    if strategy is None or strategy.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    version_rows = await db.execute(
+        select(StrategyVersion)
+        .where(StrategyVersion.strategy_id == strategy_id)
+        .order_by(StrategyVersion.created_at.desc())
+    )
+    versions = [_version_out(v) for v in version_rows.scalars().all()]
+
+    event_rows = await db.execute(
+        select(PipelineEvent)
+        .where(PipelineEvent.strategy_id == strategy_id)
+        .order_by(PipelineEvent.created_at.desc())
+        .limit(20)
+    )
+    events = [_event_out(e) for e in event_rows.scalars().all()]
+
+    return StrategyDetail(
+        id=strategy.id,
+        name=strategy.name,
+        family=strategy.family,
+        type=strategy.type,
+        status=strategy.status,
+        description=strategy.description,
+        risk_profile=strategy.risk_profile,
+        market=strategy.market,
+        universe=strategy.universe,
+        frequency=strategy.frequency,
+        owner_id=strategy.owner_id,
+        sharpe=strategy.sharpe,
+        max_dd=strategy.max_dd,
+        annual_return=strategy.annual_return,
+        oos_score=strategy.oos_score,
+        created_at=strategy.created_at.isoformat() if strategy.created_at else "",
+        updated_at=strategy.updated_at.isoformat() if strategy.updated_at else "",
+        versions=versions,
+        recent_events=events,
+    )
+
+
+@router.put("/{strategy_id}", response_model=StrategyDetail)
+@router.patch("/{strategy_id}", response_model=StrategyDetail)
+async def update_strategy(
+    strategy_id: str,
+    payload: StrategyUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> StrategyDetail:
+    """Partial update — only provided fields are modified."""
+    strategy = await db.get(Strategy, strategy_id)
+    if strategy is None or strategy.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    data = payload.model_dump(exclude_unset=True, by_alias=False)
+    old_status = strategy.status
+    for field, value in data.items():
+        setattr(strategy, field, value)
+    strategy.updated_at = now_utc()
+    strategy.updated_by = get_actor_id() or strategy.updated_by
+    await db.commit()
+    await db.refresh(strategy)
+
+    # If status changed, log a pipeline event for traceability.
+    if "status" in data and data["status"] != old_status:
+        db.add(
+            PipelineEvent(
+                strategy_id=strategy_id,
+                stage=str(data["status"]),
+                event=f"transition.{old_status}_to_{data['status']}",
+                progress=0,
+                detail="manual update",
+                trace_id=get_trace_id(),
+            )
         )
-        for e in rows.scalars().all()
-    ]
+        await db.commit()
+
+    await AuditService(db).log(
+        action="strategy.updated",
+        resource_type="strategy",
+        resource_id=strategy_id,
+        detail=json.dumps(data, ensure_ascii=False)[:512],
+    )
+
+    return await get_strategy(strategy_id, db)
+
+
+@router.delete("/{strategy_id}")
+async def delete_strategy(
+    strategy_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    """Soft-delete a strategy (sets `deleted_at`)."""
+    strategy = await db.get(Strategy, strategy_id)
+    if strategy is None or strategy.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    strategy.deleted_at = now_utc()
+    strategy.updated_at = now_utc()
+    strategy.updated_by = get_actor_id() or strategy.updated_by
+    await db.commit()
+
+    await AuditService(db).log(
+        action="strategy.deleted",
+        resource_type="strategy",
+        resource_id=strategy_id,
+        result_tone="yellow",
+        detail=f"name={strategy.name}",
+    )
+
+    return {"strategy_id": strategy_id, "deleted": "true"}
 
 
 @router.post("/", response_model=dict[str, str])
@@ -325,6 +529,8 @@ async def create_strategy(
         universe=payload.universe,
         frequency=payload.frequency,
         status="draft",
+        owner_id=get_actor_id() or "system",
+        trace_id=get_trace_id(),
     )
     db.add(strategy)
     await db.commit()

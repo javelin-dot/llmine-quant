@@ -6,6 +6,7 @@ import PipelineRibbon from './PipelineRibbon'
 import AIForge from './AIForge'
 import StrategyMatrix from './StrategyMatrix'
 import PipelineBoard from './PipelineBoard'
+import StrategyDetailModal from './StrategyDetailModal'
 
 interface StrategyProps {
   onNavigate?: (target: string) => void
@@ -14,6 +15,7 @@ interface StrategyProps {
 
 export default function Strategy({ onNavigate, onModal }: StrategyProps) {
   const [data, setData] = useState<MockData['strategy'] | null>(null)
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     api.strategy.overview()
@@ -32,9 +34,23 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
       <div className="strategy-root">
         <PipelineRibbon />
         <AIForge onModal={onModal} onRefresh={refresh} />
-        <StrategyMatrix onNavigate={onNavigate} />
-        <PipelineBoard onNavigate={onNavigate} />
+        <StrategyMatrix
+          onNavigate={onNavigate}
+          onOpenStrategy={(id) => setSelectedStrategyId(id)}
+        />
+        <PipelineBoard
+          onNavigate={onNavigate}
+          onOpenStrategy={(id) => setSelectedStrategyId(id)}
+        />
       </div>
+      {selectedStrategyId && (
+        <StrategyDetailModal
+          key={selectedStrategyId}
+          strategyId={selectedStrategyId}
+          onClose={() => setSelectedStrategyId(null)}
+          onChanged={refresh}
+        />
+      )}
     </StrategyProvider>
   )
 }

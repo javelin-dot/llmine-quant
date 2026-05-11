@@ -14,7 +14,7 @@ interface AIForgeProps {
   onRefresh?: () => void
 }
 
-export default function AIForge({ onModal, onRefresh }: AIForgeProps) {
+export default function AIForge({ onRefresh }: AIForgeProps) {
   const data = useStrategy()
   const [prompt, setPrompt] = useState(data.nlPrompt)
   const [risk, setRisk] = useState<'all' | 'conservative' | 'balanced' | 'aggressive'>('all')

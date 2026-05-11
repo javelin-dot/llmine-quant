@@ -19,7 +19,15 @@ logger = get_logger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    logger.info("startup", app_name=settings.app_name, version=settings.app_version, env=settings.env)
+    logger.info(
+        "startup",
+        app_name=settings.app_name,
+        version=settings.app_version,
+        env=settings.env,
+        llm_provider=settings.llm_provider,
+        llm_source=settings.llm_source,
+        anthropic_base_url=settings.anthropic_base_url,
+    )
     yield
     logger.info("shutdown")
 

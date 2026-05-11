@@ -50,9 +50,10 @@ function MicroSpark({ data, positive }: MicroSparkProps) {
 
 interface StrategyMatrixProps {
   onNavigate?: (target: string) => void
+  onOpenStrategy?: (id: string) => void
 }
 
-export default function StrategyMatrix({ onNavigate }: StrategyMatrixProps) {
+export default function StrategyMatrix({ onOpenStrategy }: StrategyMatrixProps) {
   const data = useStrategy()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('annualReturn')
@@ -138,7 +139,7 @@ export default function StrategyMatrix({ onNavigate }: StrategyMatrixProps) {
                 <tr
                   key={r.id}
                   className="matrix-row"
-                  onClick={() => onNavigate?.('backtest')}
+                  onClick={() => onOpenStrategy?.(r.id)}
                 >
                   <td className="td-name">
                     <strong>{r.name}</strong>

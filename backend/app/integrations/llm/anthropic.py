@@ -2,6 +2,10 @@
 
 Default model: claude-sonnet-4-6 (per implementation plan).
 Set `ANTHROPIC_API_KEY` and `LLM_PROVIDER=anthropic` to enable.
+
+Also supports Bearer-style auth via `auth_token` (e.g. Kimi proxy at
+`https://api.kimi.com/coding/`) and custom `base_url`. These are
+typically auto-populated from `~/.claude/settings.json`.
 """
 
 import json
@@ -17,6 +21,24 @@ class AnthropicLLMProvider(LLMProvider):
     name = "anthropic"
     default_model = "claude-sonnet-4-6"
 
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout_seconds: int = 120,
+        max_tokens: int = 4096,
+        auth_token: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout_seconds,
+            max_tokens=max_tokens,
+        )
+        self.auth_token = auth_token
+        self.base_url = base_url
+
     def _get_client(self) -> Any:
         try:
             import anthropic  # type: ignore[import-not-found]
@@ -27,13 +49,22 @@ class AnthropicLLMProvider(LLMProvider):
                 details={"provider": self.name},
             ) from exc
 
-        if not self.api_key:
+        if not self.api_key and not self.auth_token:
             raise LLMException(
-                "ANTHROPIC_API_KEY is not configured.",
+                "Neither ANTHROPIC_API_KEY nor ANTHROPIC_AUTH_TOKEN is configured.",
                 details={"provider": self.name},
             )
 
-        return anthropic.AsyncAnthropic(api_key=self.api_key, timeout=self.timeout_seconds)
+        kwargs: dict[str, Any] = {"timeout": self.timeout_seconds}
+        if self.base_url:
+            kwargs["base_url"] = self.base_url
+        if self.auth_token:
+            # Bearer-style auth — used by Kimi and other Anthropic-compatible proxies.
+            kwargs["auth_token"] = self.auth_token
+        else:
+            kwargs["api_key"] = self.api_key
+
+        return anthropic.AsyncAnthropic(**kwargs)
 
     async def generate(
         self,

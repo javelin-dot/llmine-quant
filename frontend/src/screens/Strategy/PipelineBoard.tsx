@@ -2,6 +2,7 @@ import { useStrategy } from '../../contexts/StrategyContext'
 
 interface PipelineBoardProps {
   onNavigate?: (target: string) => void
+  onOpenStrategy?: (id: string) => void
 }
 
 function tagClass(c?: string) {
@@ -9,14 +10,14 @@ function tagClass(c?: string) {
   return `tag ${c}`
 }
 
-export default function PipelineBoard({ onNavigate }: PipelineBoardProps) {
+export default function PipelineBoard({ onOpenStrategy }: PipelineBoardProps) {
   const data = useStrategy()
   return (
     <div className="pipeline-board-wrap">
       <div className="pipeline-board-head">
         <div>
           <h4 className="pipeline-board-title">策略版本流水线</h4>
-          <span className="pipeline-board-sub">从草稿到归档全程可追溯 · 点击卡片跳转回测</span>
+          <span className="pipeline-board-sub">从草稿到归档全程可追溯 · 点击卡片查看详情</span>
         </div>
         <div className="pipeline-board-legend">
           <span><span className="legend-dot dot-blue" />草稿</span>
@@ -41,7 +42,7 @@ export default function PipelineBoard({ onNavigate }: PipelineBoardProps) {
                 <button
                   className={`pipeline-ticket ticket-${lane.tone}`}
                   key={t.id}
-                  onClick={() => onNavigate?.('backtest')}
+                  onClick={() => onOpenStrategy?.(t.id)}
                 >
                   <div className="pipeline-ticket-head">
                     <strong>{t.title}</strong>

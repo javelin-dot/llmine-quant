@@ -31,6 +31,8 @@ def get_llm_provider(provider: str | None = None) -> LLMProvider:
     if name == "anthropic":
         return AnthropicLLMProvider(
             api_key=settings.anthropic_api_key,
+            auth_token=settings.anthropic_auth_token,
+            base_url=settings.anthropic_base_url,
             model=settings.anthropic_model,
             timeout_seconds=settings.llm_timeout_seconds,
             max_tokens=settings.llm_max_tokens,
@@ -39,6 +41,7 @@ def get_llm_provider(provider: str | None = None) -> LLMProvider:
     if name == "openai":
         return OpenAILLMProvider(
             api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url,
             model=settings.openai_model,
             timeout_seconds=settings.llm_timeout_seconds,
             max_tokens=settings.llm_max_tokens,
