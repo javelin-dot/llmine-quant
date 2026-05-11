@@ -63,3 +63,9 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=app --cov-report=term-missing"
+
+# Pylance / basedpyright: workspace root is the monorepo, so default ./.venv is wrong.
+# Paths are relative to this file (backend/).
+[tool.basedpyright]
+venvPath = "."
+venv = ".venv"

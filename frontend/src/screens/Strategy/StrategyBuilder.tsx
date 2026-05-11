@@ -77,6 +77,7 @@ interface TraceItem {
 interface StrategyBuilderProps {
   onRefresh?: () => void
   onOpenStrategy?: (id: string) => void
+  onNavigate?: (target: string) => void
 }
 
 function clipText(text: string, maxChars: number): string {
@@ -98,7 +99,7 @@ function frequencyLabel(freq: string): string {
   return map[freq] || freq || '未指定'
 }
 
-export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyBuilderProps) {
+export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate }: StrategyBuilderProps) {
   const data = useStrategy()
 
   // Strategy Brief form state
@@ -113,6 +114,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
   const [taskId, setTaskId] = useState<string | null>(null)
   const [taskStatus, setTaskStatus] = useState<string | null>(null)
   const [taskProgress, setTaskProgress] = useState(0)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
 
   // Draft result
   const [draftResult, setDraftResult] = useState<StrategyDraft | null>(null)
@@ -143,10 +145,6 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
   /** @param nlHint 生成刚完成时传入概要框文案；默认载入最新策略时传 null，避免随输入框抖动重复请求 */
   const buildDraftFromStrategyDetail = useCallback(
     (d: StrategyDetail, nlHint: string | null): StrategyDraft => {
-      const v0 = d.versions[0]
-      const code = v0?.codeText ?? null
-      const codeSnippet = code ? clipText(code, 560) : ''
-
       const metricParts: string[] = []
       if (d.sharpe != null) metricParts.push(`夏普 ${d.sharpe.toFixed(2)}`)
       if (d.maxDd != null) metricParts.push(`最大回撤 ${(d.maxDd * 100).toFixed(1)}%`)
@@ -166,12 +164,16 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
           : ''
 
       const desc = d.description?.trim()
-      const signalCore =
-        desc ||
-        '本版将自然语言诉求落实为可执行的策略代码；若描述为空，请打开右侧详情查看「代码」与事件日志。'
-      const signalDefinition = codeSnippet
-        ? `${signalCore}\n\n【生成代码节选】\n${codeSnippet}`
-        : signalCore
+      const signalDefinition = [
+        desc ? `核心信号：${desc}` : `核心信号：基于 ${d.family} 风格生成候选标的与权重建议。`,
+        d.universe ? `标的范围：${d.universe}` : null,
+        `交易周期：${frequencyLabel(d.frequency)}`,
+        `风险偏好：${RISK_PROFILES.find((r) => r.id === d.riskProfile)?.label ?? d.riskProfile}`,
+        metricParts.length ? `验证快照：${metricParts.join('；')}` : null,
+        '源码已归档在策略详情的「代码」页签，此处仅展示可审查的信号逻辑摘要。',
+      ]
+        .filter(Boolean)
+        .join('\n')
 
       const briefLine = nlHint?.trim()
         ? `您在概要中的表述（节选）：${clipText(nlHint, 260)}`
@@ -516,6 +518,38 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
     }
   }
 
+  const handleDraftAction = async (action: 'backtest' | 'review' | 'risk' | 'save') => {
+    if (!draftResult) return
+    setActionNotice(null)
+
+    if (action === 'backtest') {
+      setActionNotice('已进入回测实验室，可继续查看参数搜索与样本外验证。')
+      onNavigate?.('backtest')
+      return
+    }
+
+    if (action === 'review') {
+      setActionNotice('已打开策略详情，请在概览、代码与流水线页签中审查信号逻辑。')
+      onOpenStrategy?.(draftResult.id)
+      return
+    }
+
+    if (action === 'risk') {
+      setActionNotice('已进入风控与熔断页，可审查该草案的风险预算与约束。')
+      onNavigate?.('risk')
+      return
+    }
+
+    try {
+      await api.strategy.update(draftResult.id, { status: 'draft' })
+      setDraftResult((prev) => (prev ? { ...prev, status: '草稿' } : prev))
+      setActionNotice('草稿已保存，策略状态已保持为草稿。')
+      onRefresh?.()
+    } catch (e) {
+      setActionNotice(`保存失败：${String(e)}`)
+    }
+  }
+
   const riskMeta = RISK_PROFILES.find((r) => r.id === riskProfile)
 
   return (
@@ -677,11 +711,12 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy }: StrategyB
             <div className="draft-next-actions">
               <span className="draft-next-label">下一步操作</span>
               <div className="draft-next-buttons">
-                <button className="btn">运行回测</button>
-                <button className="btn secondary">审查信号逻辑</button>
-                <button className="btn secondary">风控检查</button>
-                <button className="btn secondary">保存草稿</button>
+                <button className="btn" onClick={() => void handleDraftAction('backtest')}>运行回测</button>
+                <button className="btn secondary" onClick={() => void handleDraftAction('review')}>审查信号逻辑</button>
+                <button className="btn secondary" onClick={() => void handleDraftAction('risk')}>风控检查</button>
+                <button className="btn secondary" onClick={() => void handleDraftAction('save')}>保存草稿</button>
               </div>
+              {actionNotice && <div className="draft-action-notice">{actionNotice}</div>}
             </div>
           </div>
         )}

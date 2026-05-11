@@ -204,7 +204,7 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId, stageFilte
                           className="matrix-action-btn"
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (a === 'Open') onOpenStrategy?.(r.id)
+                            if (a === '打开') onOpenStrategy?.(r.id)
                           }}
                         >
                           {a}

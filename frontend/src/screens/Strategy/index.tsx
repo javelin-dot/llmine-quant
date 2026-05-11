@@ -102,6 +102,7 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
         <StrategyBuilder
           onRefresh={refresh}
           onOpenStrategy={handleCreateOpenStrategy}
+          onNavigate={onNavigate}
         />
 
         {/* ================================================================ */}

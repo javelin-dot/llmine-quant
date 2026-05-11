@@ -135,7 +135,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="research",
-                agent_role="agent-research",
+                agent_role="research",
                 event="research.scan",
                 progress=15,
                 detail={"sources": ["macro", "sector_rotation"]},
@@ -147,7 +147,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="code_gen",
-                agent_role="agent-strategy",
+                agent_role="strategy",
                 event="code.generated",
                 progress=35,
                 detail={"chars": len(code_text), "model": metadata.get("model")},
@@ -162,7 +162,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="static_check",
-                agent_role="agent-strategy",
+                agent_role="strategy",
                 event="code.static_check_passed",
                 progress=50,
                 detail={"checks": ["ast.parse"]},
@@ -174,7 +174,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="backtest",
-                agent_role="agent-backtest",
+                agent_role="backtest",
                 event="backtest.completed",
                 progress=75,
                 detail=backtest,
@@ -187,7 +187,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="risk",
-                agent_role="agent-risk",
+                agent_role="risk",
                 event=event,
                 progress=90,
                 detail={"approved": risk_ok, "metrics": backtest},
@@ -211,7 +211,7 @@ class StrategyGenerationService:
             await self._stage(
                 task=task,
                 stage="done",
-                agent_role="agent-strategy",
+                agent_role="strategy",
                 event="strategy.published",
                 progress=100,
                 detail={"strategyId": strategy.id, "versionId": version.id},
@@ -287,13 +287,17 @@ class StrategyGenerationService:
             },
             correlation_id=correlation_id,
         )
+        task.agent_task_id = agent_task.id
+        await self.session.commit()
+        await self.session.refresh(task)
+
         await self.orchestrator.complete_task(
             agent_task.id,
             result={"event": event, "progress": progress, **detail},
             status="succeeded",
         )
         await self.orchestrator.send_message(
-            from_agent=agent_role,
+            from_agent=agent_task.agent_id,
             to_agent=None,
             topic=f"strategy.{stage}",
             payload={
@@ -311,7 +315,7 @@ class StrategyGenerationService:
             event=event,
             progress=progress,
             detail=detail,
-            agent=agent_role,
+            agent=agent_task.agent_id,
             strategy_id=task.strategy_id,
         )
 

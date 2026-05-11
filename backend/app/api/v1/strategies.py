@@ -315,6 +315,14 @@ async def get_strategy_task(
     """Query task status and progress."""
     task = await db.get(StrategyTask, task_id)
     if task is None:
+        task_row = await db.execute(
+            select(StrategyTask)
+            .where(StrategyTask.strategy_id == task_id)
+            .order_by(StrategyTask.created_at.desc())
+            .limit(1)
+        )
+        task = task_row.scalar_one_or_none()
+    if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_out(task)
 

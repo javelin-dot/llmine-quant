@@ -77,6 +77,35 @@ export default function App() {
 
   const modalData = modal && globalData ? globalData.modals[modal] : null
 
+  const renderActiveScreen = () => {
+    switch (screen) {
+      case 'dashboard':
+        return <Dashboard onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'strategy':
+        return <Strategy onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'backtest':
+        return <Backtest onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'explain':
+        return <Explain onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'portfolio':
+        return <Portfolio onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'execution':
+        return <Execution onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'risk':
+        return <Risk onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'data':
+        return <Data onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'security':
+        return <Security onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'collaboration':
+        return <Collaboration onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'audit':
+        return <Audit onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      default:
+        return null
+    }
+  }
+
   return (
     <div className={`app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {/* Sidebar */}
@@ -154,59 +183,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* ===== Dashboard ===== */}
-        <section className={screen === 'dashboard' ? 'screen active' : 'screen'}>
-          <Dashboard onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Strategy ===== */}
-        <section className={screen === 'strategy' ? 'screen active' : 'screen'}>
-          <Strategy onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Backtest ===== */}
-        <section className={screen === 'backtest' ? 'screen active' : 'screen'}>
-          <Backtest onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Explain ===== */}
-        <section className={screen === 'explain' ? 'screen active' : 'screen'}>
-          <Explain onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Portfolio ===== */}
-        <section className={screen === 'portfolio' ? 'screen active' : 'screen'}>
-          <Portfolio onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Execution ===== */}
-        <section className={screen === 'execution' ? 'screen active' : 'screen'}>
-          <Execution onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Risk ===== */}
-        <section className={screen === 'risk' ? 'screen active' : 'screen'}>
-          <Risk onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Data ===== */}
-        <section className={screen === 'data' ? 'screen active' : 'screen'}>
-          <Data onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Security ===== */}
-        <section className={screen === 'security' ? 'screen active' : 'screen'}>
-          <Security onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-        {/* ===== Collaboration ===== */}
-        <section className={screen === 'collaboration' ? 'screen active' : 'screen'}>
-          <Collaboration onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
-
-        {/* ===== Audit ===== */}
-        <section className={screen === 'audit' ? 'screen active' : 'screen'}>
-          <Audit onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-        </section>
+        <section className="screen active">{renderActiveScreen()}</section>
       </main>
 
       {/* Mobile Tabs */}
