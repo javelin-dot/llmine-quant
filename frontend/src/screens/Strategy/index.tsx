@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import type { MockData } from '../../data/types'
 import { StrategyProvider } from '../../contexts/StrategyContext'
-import PipelineRibbon from './PipelineRibbon'
-import AIForge from './AIForge'
+import LifecycleOverview from './LifecycleOverview'
+import StrategyBuilder from './StrategyBuilder'
 import StrategyMatrix from './StrategyMatrix'
-import PipelineBoard from './PipelineBoard'
+import StrategyLifecycle from './StrategyLifecycle'
 import StrategyDetailModal from './StrategyDetailModal'
 
 interface StrategyProps {
@@ -17,6 +17,7 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
   const [data, setData] = useState<MockData['strategy'] | null>(null)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null)
+  const [stageFilter, setStageFilter] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     api.strategy.overview()
@@ -40,24 +41,85 @@ export default function Strategy({ onNavigate, onModal }: StrategyProps) {
     setSelectedStrategyId(id)
   }, [])
 
-  if (!data) return <div className="strategy-root">Loading Strategy…</div>
+  if (!data) return <div className="strategy-root">Loading Strategy Factory...</div>
 
   return (
     <StrategyProvider value={data}>
-      <div className="strategy-root">
-        <PipelineRibbon />
-        <AIForge onModal={onModal} onRefresh={refresh} onOpenStrategy={handleCreateOpenStrategy} />
+      <div className="strategy-root strategy-workspace">
+
+        {/* ================================================================ */}
+        {/* Page Header — Strategy Factory identity + system status */}
+        {/* ================================================================ */}
+        <header className="sf-header">
+          <div className="sf-header-left">
+            <div className="sf-header-brand">
+              <h1 className="sf-header-title">Strategy Factory</h1>
+              <span className="sf-header-divider" />
+              <span className="sf-header-sub">策略研究、回测、风控与上线工作台</span>
+            </div>
+            <p className="sf-header-desc">
+              AI 辅助策略研究、回测与上线工作流
+            </p>
+          </div>
+          <div className="sf-header-right">
+            <span className="sf-status-pill sf-status-autopilot">
+              <span className="sf-status-dot sf-dot-green" />
+              <span className="sf-status-label">AI Autopilot</span>
+              <span className="sf-status-value">ON</span>
+            </span>
+            <span className="sf-status-pill sf-status-risk">
+              <span className="sf-status-dot sf-dot-green" />
+              <span className="sf-status-label">Risk Gate</span>
+              <span className="sf-status-value">NORMAL</span>
+            </span>
+            <span className="sf-status-pill sf-status-market">
+              <span className="sf-status-dot sf-dot-green" />
+              <span className="sf-status-label">Market Data</span>
+              <span className="sf-status-value">CONNECTED</span>
+            </span>
+            <button
+              className="sf-kill-switch"
+              onClick={() => onModal?.('kill')}
+              title="紧急熔断 — 暂停所有实盘策略"
+            >
+              <span className="sf-kill-icon">◼</span>
+              紧急熔断
+            </button>
+          </div>
+        </header>
+
+        {/* ================================================================ */}
+        {/* Lifecycle Overview — stage cards with filter */}
+        {/* ================================================================ */}
+        <LifecycleOverview
+          onFilterStage={setStageFilter}
+          activeFilter={stageFilter}
+        />
+
+        {/* ================================================================ */}
+        {/* Primary Workspace — 3-column: Brief | Draft | Trace */}
+        {/* ================================================================ */}
+        <StrategyBuilder
+          onRefresh={refresh}
+          onOpenStrategy={handleCreateOpenStrategy}
+        />
+
+        {/* ================================================================ */}
+        {/* Strategy Matrix — portfolio & historical strategy table */}
+        {/* ================================================================ */}
         <StrategyMatrix
           onNavigate={onNavigate}
           onOpenStrategy={handleOpenStrategy}
           highlightId={lastCreatedId}
+          stageFilter={stageFilter}
         />
-        <PipelineBoard
-          onNavigate={onNavigate}
-          onOpenStrategy={handleOpenStrategy}
-          highlightId={lastCreatedId}
-        />
+
+        {/* ================================================================ */}
+        {/* Strategy Lifecycle — collapsed by default, bound to selection */}
+        {/* ================================================================ */}
+        <StrategyLifecycle strategyId={selectedStrategyId} />
       </div>
+
       {selectedStrategyId && (
         <StrategyDetailModal
           key={selectedStrategyId}

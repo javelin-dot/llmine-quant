@@ -3,24 +3,16 @@ import { useStrategy } from '../../contexts/StrategyContext'
 
 type SortKey = 'annualReturn' | 'maxDd' | 'sharpe' | 'oosScore' | 'name'
 type SortDir = 'asc' | 'desc'
-type StatusFilter = 'all' | 'live' | 'paper' | 'backtest' | 'backtesting' | 'draft'
 
-const STATUS_META: Record<string, { label: string; tone: string }> = {
-  live: { label: 'Live', tone: 'green' },
-  paper: { label: 'Paper', tone: 'yellow' },
-  backtest: { label: 'Backtest', tone: 'blue' },
-  backtesting: { label: '回测中', tone: 'purple' },
-  draft: { label: 'Draft', tone: 'gray' },
+const STAGE_META: Record<string, { label: string; tone: string }> = {
+  live: { label: '实盘', tone: 'green' },
+  paper: { label: '模拟盘', tone: 'yellow' },
+  backtest: { label: '回测', tone: 'blue' },
+  backtesting: { label: '回测', tone: 'blue' },
+  draft: { label: '草稿', tone: 'gray' },
+  research: { label: '研究', tone: 'purple' },
+  paused: { label: '暂停', tone: 'gray' },
 }
-
-const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'live', label: 'Live' },
-  { id: 'paper', label: 'Paper' },
-  { id: 'backtest', label: 'Backtest' },
-  { id: 'backtesting', label: '回测中' },
-  { id: 'draft', label: 'Draft' },
-]
 
 interface MicroSparkProps {
   data: number[]
@@ -52,18 +44,29 @@ interface StrategyMatrixProps {
   onNavigate?: (target: string) => void
   onOpenStrategy?: (id: string) => void
   highlightId?: string | null
+  stageFilter?: string | null
 }
 
-export default function StrategyMatrix({ onOpenStrategy, highlightId }: StrategyMatrixProps) {
+export default function StrategyMatrix({ onOpenStrategy, highlightId, stageFilter }: StrategyMatrixProps) {
   const data = useStrategy()
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [sortKey, setSortKey] = useState<SortKey>('annualReturn')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const rows = useMemo(() => {
-    const filtered = data.matrix.filter((r) =>
-      statusFilter === 'all' ? true : r.status === statusFilter
-    )
+    let filtered = data.matrix
+    if (stageFilter) {
+      // Map lifecycle filter keys to matrix status values
+      const filterMap: Record<string, string[]> = {
+        ideas: ['draft'],
+        research: ['research'],
+        backtest: ['backtest', 'backtesting'],
+        paper: ['paper'],
+        live: ['live'],
+        paused: ['paused'],
+      }
+      const targetStatuses = filterMap[stageFilter] || [stageFilter]
+      filtered = filtered.filter((r) => targetStatuses.includes(r.status))
+    }
     const sorted = [...filtered].sort((a, b) => {
       const cmp =
         sortKey === 'name'
@@ -72,7 +75,7 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId }: Strategy
       return sortDir === 'asc' ? cmp : -cmp
     })
     return sorted
-  }, [statusFilter, sortKey, sortDir])
+  }, [data.matrix, stageFilter, sortKey, sortDir])
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -88,23 +91,32 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId }: Strategy
     return sortDir === 'asc' ? '↑' : '↓'
   }
 
+  const getActions = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return ['打开', '运行回测']
+      case 'backtest':
+      case 'backtesting':
+        return ['打开', '推送模拟盘']
+      case 'paper':
+        return ['打开', '部署实盘', '暂停']
+      case 'live':
+        return ['打开', '暂停']
+      case 'paused':
+        return ['打开', '恢复']
+      default:
+        return ['打开']
+    }
+  }
+
   return (
     <div className="strategy-matrix">
       <div className="strategy-matrix-head">
         <div>
-          <h4 className="strategy-matrix-title">Strategy Matrix</h4>
-          <span className="strategy-matrix-sub">{rows.length} 个策略 · 按指标排序</span>
-        </div>
-        <div className="strategy-matrix-filters">
-          {STATUS_FILTERS.map((f) => (
-            <button
-              key={f.id}
-              className={`matrix-filter ${statusFilter === f.id ? 'active' : ''}`}
-              onClick={() => setStatusFilter(f.id)}
-            >
-              {f.label}
-            </button>
-          ))}
+          <h4 className="strategy-matrix-title">策略矩阵</h4>
+          <span className="strategy-matrix-sub">
+            {rows.length} 个策略 · 策略组合、回测结果与部署状态
+          </span>
         </div>
       </div>
       <div className="strategy-matrix-table-wrap">
@@ -112,49 +124,58 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId }: Strategy
           <thead>
             <tr>
               <th className="th-sortable" onClick={() => toggleSort('name')}>
-                策略 <span className="th-sort">{sortIcon('name')}</span>
+                策略名称 <span className="th-sort">{sortIcon('name')}</span>
               </th>
-              <th>族群</th>
+              <th>类型</th>
+              <th>股票池</th>
               <th className="th-sortable th-num" onClick={() => toggleSort('annualReturn')}>
-                年化 <span className="th-sort">{sortIcon('annualReturn')}</span>
+                CAGR <span className="th-sort">{sortIcon('annualReturn')}</span>
               </th>
               <th className="th-sortable th-num" onClick={() => toggleSort('maxDd')}>
                 最大回撤 <span className="th-sort">{sortIcon('maxDd')}</span>
               </th>
               <th className="th-sortable th-num" onClick={() => toggleSort('sharpe')}>
-                夏普 <span className="th-sort">{sortIcon('sharpe')}</span>
+                Sharpe <span className="th-sort">{sortIcon('sharpe')}</span>
               </th>
               <th className="th-sortable th-num" onClick={() => toggleSort('oosScore')}>
-                OOS <span className="th-sort">{sortIcon('oosScore')}</span>
+                OOS 稳定性 <span className="th-sort">{sortIcon('oosScore')}</span>
               </th>
               <th>趋势</th>
-              <th>状态</th>
-              <th>更新</th>
+              <th>阶段</th>
+              <th>更新时间</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const positive = r.annualReturn >= 0
-              const meta = STATUS_META[r.status]
+              const meta = STAGE_META[r.status] || { label: r.status, tone: 'gray' }
+              const actions = getActions(r.status)
               return (
                 <tr
                   key={r.id}
                   className={`matrix-row ${r.id === highlightId ? 'matrix-row-highlight' : ''}`}
-                  onClick={() => onOpenStrategy?.(r.id)}
                 >
-                  <td className="td-name">
+                  <td className="td-name" onClick={() => onOpenStrategy?.(r.id)}>
                     <strong>{r.name}</strong>
                   </td>
-                  <td className="td-family">{r.family}</td>
-                  <td className={`td-num ${positive ? 'pos' : 'neg'}`}>
+                  <td className="td-family" onClick={() => onOpenStrategy?.(r.id)}>
+                    {r.family}
+                  </td>
+                  <td className="td-universe" onClick={() => onOpenStrategy?.(r.id)}>
+                    —
+                  </td>
+                  <td className={`td-num ${positive ? 'pos' : 'neg'}`} onClick={() => onOpenStrategy?.(r.id)}>
                     {positive ? '+' : ''}
                     {(r.annualReturn * 100).toFixed(1)}%
                   </td>
-                  <td className="td-num neg">
+                  <td className="td-num neg" onClick={() => onOpenStrategy?.(r.id)}>
                     {(r.maxDd * 100).toFixed(1)}%
                   </td>
-                  <td className="td-num">{r.sharpe.toFixed(2)}</td>
-                  <td className="td-num">
+                  <td className="td-num" onClick={() => onOpenStrategy?.(r.id)}>
+                    {r.sharpe.toFixed(2)}
+                  </td>
+                  <td className="td-num" onClick={() => onOpenStrategy?.(r.id)}>
                     <span
                       className={`oos-pill ${
                         r.oosScore >= 0.7 ? 'pos' : r.oosScore >= 0.5 ? 'mid' : 'neg'
@@ -163,16 +184,34 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId }: Strategy
                       {r.oosScore.toFixed(2)}
                     </span>
                   </td>
-                  <td className="td-spark">
+                  <td className="td-spark" onClick={() => onOpenStrategy?.(r.id)}>
                     <MicroSpark data={r.sparkline} positive={positive} />
                   </td>
-                  <td>
+                  <td onClick={() => onOpenStrategy?.(r.id)}>
                     <span className={`matrix-status status-tag-${meta.tone}`}>
                       <span className={`status-dot-mini status-dot-${meta.tone}`} />
                       {meta.label}
                     </span>
                   </td>
-                  <td className="td-time">{r.lastUpdate}</td>
+                  <td className="td-time" onClick={() => onOpenStrategy?.(r.id)}>
+                    {r.lastUpdate}
+                  </td>
+                  <td className="td-actions">
+                    <div className="matrix-actions">
+                      {actions.map((a) => (
+                        <button
+                          key={a}
+                          className="matrix-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (a === 'Open') onOpenStrategy?.(r.id)
+                          }}
+                        >
+                          {a}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
                 </tr>
               )
             })}

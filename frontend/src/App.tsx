@@ -138,13 +138,12 @@ export default function App() {
       <main>
         {/* Topbar */}
         <header className="topbar">
-          <div className="search">
+          <button className="command-palette" onClick={() => openModal('create')}>
             <span>⌕</span>
-            <input
-              placeholder="告诉 AI：例如‘生成一个 BTC/ETH 激进趋势策略，最大回撤 20%，自动完成回测和模拟盘部署’"
-              onKeyDown={(e) => { if (e.key === 'Enter') openModal('create') }}
-            />
-          </div>
+            <span>Command Palette</span>
+            <kbd>⌘</kbd>
+            <kbd>K</kbd>
+          </button>
           <div className="top-actions">
             <span className="pill">
               <span className="dot" /> AI Autopilot {globalData?.system.autopilot ? 'ON' : 'OFF'}
