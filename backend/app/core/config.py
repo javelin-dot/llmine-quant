@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     default_page_size: int = 20
     max_page_size: int = 100
 
+    # LLM provider
+    llm_provider: str = "mock"  # mock / anthropic / openai
+    llm_timeout_seconds: int = 120
+    llm_max_tokens: int = 4096
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-sonnet-4-6"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

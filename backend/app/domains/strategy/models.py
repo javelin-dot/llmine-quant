@@ -35,6 +35,7 @@ class StrategyVersion(BaseModel):
     strategy_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     code_uri: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    code_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     params_schema: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     risk_rules: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON
     status: Mapped[str] = mapped_column(String(32), default="draft")

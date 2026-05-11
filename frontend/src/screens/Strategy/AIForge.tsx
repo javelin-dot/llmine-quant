@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { api } from '../../lib/api'
 import { useStrategy } from '../../contexts/StrategyContext'
 
 const RISK_FILTERS: { id: 'all' | 'conservative' | 'balanced' | 'aggressive'; label: string; tone: string }[] = [
@@ -10,17 +11,151 @@ const RISK_FILTERS: { id: 'all' | 'conservative' | 'balanced' | 'aggressive'; la
 
 interface AIForgeProps {
   onModal?: (target: string) => void
+  onRefresh?: () => void
 }
 
-export default function AIForge({ onModal }: AIForgeProps) {
+export default function AIForge({ onModal, onRefresh }: AIForgeProps) {
   const data = useStrategy()
   const [prompt, setPrompt] = useState(data.nlPrompt)
   const [risk, setRisk] = useState<'all' | 'conservative' | 'balanced' | 'aggressive'>('all')
   const [activeTemplate, setActiveTemplate] = useState<string | null>(null)
 
+  const [generating, setGenerating] = useState(false)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [taskStatus, setTaskStatus] = useState<string | null>(null)
+  const [taskProgress, setTaskProgress] = useState(0)
+  const [liveFeed, setLiveFeed] = useState(data.feed)
+
+  const wsRef = useRef<WebSocket | null>(null)
+
+  useEffect(() => {
+    if (!generating || !taskId) return
+
+    let fallbackInterval: ReturnType<typeof setInterval> | null = null
+    let closed = false
+
+    const connectWs = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+      const ws = new WebSocket(`${protocol}://${window.location.host}/ws/strategy-events`)
+      wsRef.current = ws
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type !== 'strategy.event') return
+          if (msg.taskId !== taskId) return
+
+          setTaskStatus(msg.stage)
+          setTaskProgress(msg.progress)
+
+          setLiveFeed((prev) => {
+            const time = msg.timestamp
+              ? new Date(msg.timestamp).toLocaleTimeString('zh-CN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })
+              : '--:--:--'
+            const agent = (msg.agent || 'system').replace(/^agent-/, '')
+            let eventText = `[${msg.stage}] ${msg.event}`
+            if (msg.stage === 'done' && msg.detail?.strategyId) {
+              eventText = `策略已生成 · ${msg.detail.strategyId.slice(0, 8)}`
+            } else if (msg.stage === 'failed') {
+              eventText = `生成失败: ${msg.detail?.error || msg.event}`
+            }
+            const tone: 'blue' | 'green' | 'yellow' | 'purple' | 'red' =
+              msg.stage === 'failed'
+                ? 'red'
+                : msg.stage === 'done'
+                  ? 'green'
+                  : 'blue'
+            const item = { time, agent, event: eventText, tone }
+            return [item, ...prev]
+          })
+
+          if (msg.stage === 'done' || msg.stage === 'failed') {
+            setGenerating(false)
+            onRefresh?.()
+            if (fallbackInterval) {
+              clearInterval(fallbackInterval)
+              fallbackInterval = null
+            }
+            ws.close()
+          }
+        } catch {
+          // ignore malformed messages
+        }
+      }
+
+      ws.onerror = () => {
+        if (!closed && !fallbackInterval) startFallback()
+      }
+
+      ws.onclose = () => {
+        wsRef.current = null
+        if (!closed && generating && !fallbackInterval) startFallback()
+      }
+    }
+
+    const startFallback = () => {
+      fallbackInterval = setInterval(async () => {
+        try {
+          const task = await api.strategy.getTask(taskId)
+          setTaskStatus(task.status)
+          setTaskProgress(task.progress)
+          const feed = await api.strategy.getFeed()
+          setLiveFeed(feed)
+          if (task.status === 'succeeded' || task.status === 'failed') {
+            setGenerating(false)
+            onRefresh?.()
+            if (fallbackInterval) {
+              clearInterval(fallbackInterval)
+              fallbackInterval = null
+            }
+          }
+        } catch (e) {
+          console.error('Fallback poll error:', e)
+        }
+      }, 3000)
+    }
+
+    connectWs()
+
+    return () => {
+      closed = true
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      if (fallbackInterval) clearInterval(fallbackInterval)
+    }
+  }, [generating, taskId, onRefresh])
+
+  const handleGenerate = async () => {
+    if (!prompt.trim()) return
+    setLiveFeed(data.feed)
+    setGenerating(true)
+    setTaskProgress(0)
+    setTaskStatus('queued')
+    try {
+      const task = await api.strategy.createTask({
+        prompt,
+        market: 'A',
+        riskProfile: risk === 'all' ? 'balanced' : risk,
+      })
+      setTaskId(task.id)
+      setTaskStatus(task.status)
+    } catch (e) {
+      console.error('Create task error:', e)
+      setGenerating(false)
+    }
+  }
+
   const filteredTemplates = data.templates.filter((t) =>
     risk === 'all' ? true : t.risk === risk
   )
+
+  const feed = generating ? liveFeed : data.feed
 
   return (
     <div className="ai-forge">
@@ -45,16 +180,25 @@ export default function AIForge({ onModal }: AIForgeProps) {
             onChange={(e) => setPrompt(e.target.value)}
             spellCheck={false}
             placeholder="例如：创建一个 BTC 趋势突破策略，最大回撤 15%，自动完成回测和模拟盘部署"
+            disabled={generating}
           />
           <div className="ai-forge-prompt-foot">
-            <span className="ai-forge-counter">{prompt.length} 字符 · 7 个候选生成</span>
+            <span className="ai-forge-counter">
+              {generating
+                ? `${taskStatus || 'running'} · ${taskProgress}%`
+                : `${prompt.length} 字符 · 7 个候选生成`}
+            </span>
             <div className="ai-forge-actions">
-              <button className="btn secondary">保存为模板</button>
+              <button className="btn secondary" disabled={generating}>
+                保存为模板
+              </button>
               <button
                 className="btn ai-forge-cta"
-                onClick={() => onModal?.('create')}
+                onClick={handleGenerate}
+                disabled={generating}
               >
-                <span>✦</span> 让 Agent 开始
+                <span>{generating ? '◉' : '✦'}</span>
+                {generating ? ' Agent 运行中…' : ' 让 Agent 开始'}
               </button>
             </div>
           </div>
@@ -67,6 +211,7 @@ export default function AIForge({ onModal }: AIForgeProps) {
               key={f.id}
               className={`ai-forge-chip chip-${f.tone} ${risk === f.id ? 'active' : ''}`}
               onClick={() => setRisk(f.id)}
+              disabled={generating}
             >
               {f.label}
             </button>
@@ -82,6 +227,7 @@ export default function AIForge({ onModal }: AIForgeProps) {
                 key={t.id}
                 className={`ai-forge-template tpl-${tone} ${activeTemplate === t.id ? 'active' : ''}`}
                 onClick={() => setActiveTemplate(t.id)}
+                disabled={generating}
               >
                 <div className="ai-forge-template-top">
                   <span className={`ai-forge-template-tag tag-${tone}`}>{
@@ -107,10 +253,10 @@ export default function AIForge({ onModal }: AIForgeProps) {
             </h4>
             <span className="ai-forge-feed-sub">Agent 决策追踪 · 实时</span>
           </div>
-          <span className="ai-forge-feed-count">{data.feed.length}</span>
+          <span className="ai-forge-feed-count">{feed.length}</span>
         </div>
         <div className="ai-forge-feed">
-          {data.feed.map((f, i) => (
+          {feed.map((f, i) => (
             <div className={`ai-forge-feed-item feed-${f.tone}`} key={i}>
               <div className="ai-forge-feed-time">{f.time}</div>
               <div className="ai-forge-feed-body">

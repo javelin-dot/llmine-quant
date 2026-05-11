@@ -77,4 +77,48 @@ class StrategyCreate(BaseModel):
 class StrategyTaskCreate(BaseModel):
     prompt: str
     market: str = "A"
-    risk_profile: str = "balanced"
+    risk_profile: str = Field(default="balanced", alias="riskProfile")
+
+    model_config = {"populate_by_name": True}
+
+
+class StrategyTaskOut(BaseModel):
+    """Generation task as exposed by the API."""
+
+    id: str
+    prompt: str
+    market: str
+    risk_profile: str = Field(alias="riskProfile")
+    status: str
+    statusTone: str
+    progress: int = 0
+    stage: str | None = None
+    strategy_id: str | None = Field(default=None, alias="strategyId")
+    agent_task_id: str | None = Field(default=None, alias="agentTaskId")
+    result: str | None = None
+    error: str | None = None
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class PipelineEventOut(BaseModel):
+    """Single pipeline event for a strategy task."""
+
+    id: str
+    strategy_id: str = Field(alias="strategyId")
+    stage: str
+    event: str
+    progress: int
+    detail: str | None = None
+    created_at: str = Field(alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class StrategyTransition(BaseModel):
+    """Request body for transitioning a strategy between pipeline stages."""
+
+    target: str  # research / backtest / paper / live / archived
+    note: str | None = None

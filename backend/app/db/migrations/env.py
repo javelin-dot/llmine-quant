@@ -12,6 +12,19 @@ from app.core.config import settings
 from app.db.base import Base
 from app.domains.identity.models import Organization, Role, Session, User, UserRole  # noqa: F401
 from app.domains.audit.models import AuditLog, EventOutbox, IdempotencyKey  # noqa: F401
+from app.domains.strategy.models import (  # noqa: F401
+    PipelineEvent,
+    Strategy,
+    StrategyTask,
+    StrategyTemplate,
+    StrategyVersion,
+)
+from app.domains.agents.models import (  # noqa: F401
+    AgentMessage,
+    AgentRegistry,
+    AgentTask,
+    ToolRegistry,
+)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

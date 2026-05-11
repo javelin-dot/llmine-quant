@@ -1,71 +1,171 @@
 """Agent Orchestrator API — agent registry, tasks, messages, tool registry."""
 
-from fastapi import APIRouter, Depends
+from __future__ import annotations
+
+import json
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.agents.models import AgentMessage, AgentRegistry, AgentTask, ToolRegistry
 from app.domains.agents.schemas import (
+    AgentMessageCreate,
     AgentMessageOut,
     AgentOut,
     AgentOverview,
+    AgentTaskCreate,
     AgentTaskOut,
     ToolOut,
 )
+from app.services.agent_orchestrator import AgentOrchestrator
 
 router = APIRouter()
 
-_AGENTS = [
-    AgentOut(id="a1", name="Research", role="research", status="active", statusTone="green", currentTask="扫描市场结构", metric="3 tasks", heartbeat="2s ago"),
-    AgentOut(id="a2", name="Strategy", role="strategy", status="active", statusTone="green", currentTask="生成策略代码", metric="2 drafts", heartbeat="5s ago"),
-    AgentOut(id="a3", name="Backtest", role="backtest", status="active", statusTone="green", currentTask="执行回测验证", metric="5 running", heartbeat="3s ago"),
-    AgentOut(id="a4", name="Explain", role="explain", status="idle", statusTone="gray", currentTask="等待信号", metric="idle", heartbeat="1m ago"),
-    AgentOut(id="a5", name="Portfolio", role="portfolio", status="waiting", statusTone="blue", currentTask="组合优化", metric="1 proposal", heartbeat="10s ago"),
-    AgentOut(id="a6", name="Execution", role="execution", status="attention", statusTone="yellow", currentTask="订单执行", metric="3 pending", heartbeat="4s ago"),
-    AgentOut(id="a7", name="Risk", role="risk", status="active", statusTone="green", currentTask="风控检查", metric="0 breaches", heartbeat="1s ago"),
-    AgentOut(id="a8", name="Data", role="data", status="active", statusTone="green", currentTask="数据同步", metric="12 sources", heartbeat="6s ago"),
-]
 
-_TASKS = [
-    AgentTaskOut(id="t1", agentId="a1", agentName="Research", taskType="market_scan", priority=1, status="running", statusTone="green", createdAt="09:00", startedAt="09:00", completedAt=None, result=None),
-    AgentTaskOut(id="t2", agentId="a2", agentName="Strategy", taskType="code_gen", priority=2, status="running", statusTone="green", createdAt="09:05", startedAt="09:05", completedAt=None, result=None),
-    AgentTaskOut(id="t3", agentId="a3", agentName="Backtest", taskType="backtest_run", priority=1, status="pending", statusTone="yellow", createdAt="09:10", startedAt=None, completedAt=None, result=None),
-    AgentTaskOut(id="t4", agentId="a6", agentName="Execution", taskType="order_submit", priority=3, status="failed", statusTone="red", createdAt="09:25", startedAt="09:25", completedAt="09:26", result="价格超出涨跌幅限制"),
-]
+def _agent_out(agent: AgentRegistry) -> AgentOut:
+    return AgentOut(
+        id=agent.id,
+        name=agent.name,
+        role=agent.role,
+        status=agent.status,
+        statusTone="green" if agent.status == "active" else "gray" if agent.status == "idle" else "yellow",
+        currentTask=agent.current_task or "—",
+        metric=agent.metric or "—",
+        heartbeat=agent.heartbeat_at or "—",
+    )
 
-_MESSAGES = [
-    AgentMessageOut(id="m1", fromAgent="Research", toAgent="Strategy", msgType="event", topic="market_signal", payload='{"sector": "新能源", "momentum": 0.85}', correlationId="corr-001", createdAt="09:20"),
-    AgentMessageOut(id="m2", fromAgent="Strategy", toAgent="Backtest", msgType="request", topic="run_backtest", payload='{"strategy_id": "s1", "version": "v1.3"}', correlationId="corr-002", createdAt="09:25"),
-    AgentMessageOut(id="m3", fromAgent="Backtest", toAgent="Strategy", msgType="response", topic="backtest_result", payload='{"sharpe": 1.34, "max_dd": -0.123}', correlationId="corr-002", createdAt="09:30"),
-    AgentMessageOut(id="m4", fromAgent="Risk", toAgent="Execution", msgType="broadcast", topic="risk_alert", payload='{"level": "L1", "message": "回撤接近阈值"}', correlationId=None, createdAt="09:15"),
-]
 
-_TOOLS = [
-    ToolOut(id="tool1", name="place_order", level="高风险", levelTone="red", description="执行买卖订单", allowedAgents=["Execution", "Portfolio"], enabled=True),
-    ToolOut(id="tool2", name="cancel_order", level="中风险", levelTone="yellow", description="撤销未成交订单", allowedAgents=["Execution", "Risk"], enabled=True),
-    ToolOut(id="tool3", name="query_position", level="低风险", levelTone="green", description="查询持仓信息", allowedAgents=["Portfolio", "Risk", "Execution"], enabled=True),
-    ToolOut(id="tool4", name="run_backtest", level="低风险", levelTone="green", description="运行策略回测", allowedAgents=["Backtest", "Strategy"], enabled=True),
-    ToolOut(id="tool5", name="adjust_risk_budget", level="高风险", levelTone="red", description="调整风险预算", allowedAgents=["Risk"], enabled=True),
-]
+def _task_out(task: AgentTask, agent_name: str = "") -> AgentTaskOut:
+    tones = {
+        "pending": "yellow",
+        "running": "blue",
+        "succeeded": "green",
+        "failed": "red",
+    }
+    return AgentTaskOut(
+        id=task.id,
+        agentId=task.agent_id,
+        agentName=agent_name,
+        taskType=task.task_type,
+        priority=task.priority,
+        status=task.status,
+        statusTone=tones.get(task.status, "gray"),
+        createdAt=task.created_at.isoformat() if task.created_at else "",
+        startedAt=task.started_at,
+        completedAt=task.completed_at,
+        result=task.result_json,
+    )
+
+
+def _message_out(msg: AgentMessage) -> AgentMessageOut:
+    return AgentMessageOut(
+        id=msg.id,
+        fromAgent=msg.from_agent,
+        toAgent=msg.to_agent,
+        msgType=msg.msg_type,
+        topic=msg.topic,
+        payload=msg.payload_json,
+        correlationId=msg.correlation_id,
+        createdAt=msg.created_at.isoformat() if msg.created_at else "",
+    )
+
+
+def _tool_out(tool: ToolRegistry) -> ToolOut:
+    try:
+        allowed = json.loads(tool.allowed_agents) if tool.allowed_agents else []
+    except Exception:
+        allowed = []
+    level_map = {"low": ("低风险", "green"), "medium": ("中风险", "yellow"), "high": ("高风险", "red")}
+    label, tone = level_map.get(tool.level, ("未知", "gray"))
+    return ToolOut(
+        id=tool.id,
+        name=tool.name,
+        level=label,
+        levelTone=tone,
+        description=tool.description or "",
+        allowedAgents=allowed,
+        enabled=tool.enabled,
+    )
 
 
 @router.get("/overview", response_model=AgentOverview)
 async def get_agent_overview(db: AsyncSession = Depends(get_db)) -> AgentOverview:
-    """Return the complete Agent Orchestrator overview."""
-    return AgentOverview(
-        agents=_AGENTS,
-        tasks=_TASKS,
-        messages=_MESSAGES,
-        tools=_TOOLS,
+    """Return the complete Agent Orchestrator overview (DB-driven)."""
+    agents_result = await db.execute(select(AgentRegistry).order_by(AgentRegistry.name))
+    agents = [_agent_out(a) for a in agents_result.scalars().all()]
+
+    tasks_result = await db.execute(
+        select(AgentTask).order_by(desc(AgentTask.created_at)).limit(20)
     )
+    tasks = [_task_out(t) for t in tasks_result.scalars().all()]
+
+    messages_result = await db.execute(
+        select(AgentMessage).order_by(desc(AgentMessage.created_at)).limit(20)
+    )
+    messages = [_message_out(m) for m in messages_result.scalars().all()]
+
+    tools_result = await db.execute(select(ToolRegistry).order_by(ToolRegistry.name))
+    tools = [_tool_out(t) for t in tools_result.scalars().all()]
+
+    return AgentOverview(agents=agents, tasks=tasks, messages=messages, tools=tools)
 
 
-@router.post("/tasks")
-async def create_agent_task(agent_id: str, task_type: str, payload: str) -> dict[str, str]:
-    """Create a new agent task."""
-    return {"task_id": "task-new", "agent_id": agent_id, "status": "queued"}
+@router.post("/tasks", response_model=AgentTaskOut)
+async def create_agent_task(
+    payload: AgentTaskCreate,
+    db: AsyncSession = Depends(get_db),
+) -> AgentTaskOut:
+    """Create a new agent task and dispatch it."""
+    orchestrator = AgentOrchestrator(db)
+    task = await orchestrator.dispatch(
+        agent_role=payload.agent_role,
+        task_type=payload.task_type,
+        payload=payload.payload or {},
+        priority=payload.priority,
+        correlation_id=payload.correlation_id,
+    )
+    return _task_out(task)
 
 
-@router.post("/messages")
-async def send_agent_message(from_agent: str, to_agent: str | None, topic: str, payload: str) -> dict[str, str]:
+@router.get("/tasks/{task_id}", response_model=AgentTaskOut)
+async def get_agent_task(
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> AgentTaskOut:
+    """Get a single agent task."""
+    task = await db.get(AgentTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return _task_out(task)
+
+
+@router.post("/messages", response_model=AgentMessageOut)
+async def send_agent_message(
+    payload: AgentMessageCreate,
+    db: AsyncSession = Depends(get_db),
+) -> AgentMessageOut:
     """Send an inter-agent message."""
-    return {"message_id": "msg-new", "from": from_agent, "to": to_agent, "status": "sent"}
+    orchestrator = AgentOrchestrator(db)
+    msg = await orchestrator.send_message(
+        from_agent=payload.from_agent,
+        to_agent=payload.to_agent,
+        topic=payload.topic,
+        payload=payload.payload,
+        correlation_id=payload.correlation_id,
+        msg_type=payload.msg_type,
+    )
+    return _message_out(msg)
+
+
+@router.get("/messages", response_model=list[AgentMessageOut])
+async def get_agent_messages(
+    db: AsyncSession = Depends(get_db),
+    limit: int = 20,
+) -> list[AgentMessageOut]:
+    """List recent inter-agent messages."""
+    rows = await db.execute(
+        select(AgentMessage).order_by(desc(AgentMessage.created_at)).limit(limit)
+    )
+    return [_message_out(m) for m in rows.scalars().all()]

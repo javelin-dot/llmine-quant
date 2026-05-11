@@ -63,6 +63,13 @@ class IdempotencyException(LLMineException):
         super().__init__(message, code="IDEMPOTENCY_CONFLICT", status_code=status.HTTP_409_CONFLICT, details=details)
 
 
+class LLMException(LLMineException):
+    """LLM provider error — misconfiguration, network failure, parse error."""
+
+    def __init__(self, message: str = "LLM request failed", details: dict[str, Any] | None = None) -> None:
+        super().__init__(message, code="LLM_ERROR", status_code=status.HTTP_502_BAD_GATEWAY, details=details)
+
+
 async def handle_llmine_exception(request: Request, exc: LLMineException) -> JSONResponse:
     """Handle custom LLMine exceptions."""
     from app.core.tracing import get_trace_id

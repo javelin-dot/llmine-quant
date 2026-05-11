@@ -617,3 +617,30 @@ export interface MockData {
     hitlRules: { rule: string; desc: string; status: 'auto' | 'review' | 'approval'; statusTone: 'green' | 'yellow' | 'red' }[]
   }
 }
+
+export interface StrategyTaskOut {
+  id: string
+  prompt: string
+  market: string
+  riskProfile: string
+  status: string
+  statusTone: string
+  progress: number
+  stage: string | null
+  strategyId: string | null
+  agentTaskId: string | null
+  result: string | null
+  error: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PipelineEventOut {
+  id: string
+  strategyId: string
+  stage: string
+  event: string
+  progress: number
+  detail: string | null
+  createdAt: string
+}
