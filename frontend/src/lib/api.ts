@@ -69,7 +69,14 @@ export interface StrategyDetail {
   createdAt: string
   updatedAt: string
   ownerId?: string | null
-  versions: { version: string; codeText: string | null }[]
+  versions: {
+    id: string
+    version: string
+    codeText: string | null
+    paramsSchema: string | null
+    riskRules: string | null
+    createdAt: string
+  }[]
   recentEvents: { id: string; stage: string; event: string; progress: number; createdAt: string }[]
 }
 
@@ -82,6 +89,222 @@ export interface StrategyUpdatePayload {
   universe?: string | null
   frequency?: string
   status?: string
+}
+
+// ── Phase 3 real-backtest types ──────────────────────────────────────────
+
+export interface BacktestMetricPayload {
+  cumulativeReturn: number
+  annualReturn: number
+  maxDrawdown: number
+  sharpeRatio: number
+  winRate: number
+  turnover: number
+}
+
+export interface BacktestEquityPointPayload {
+  tradeDate: string
+  value: number
+  drawdown: number | null
+  phase: 'is' | 'oos'
+}
+
+export interface BacktestTaskResult {
+  taskId: string
+  runId: string | null
+  status: string
+  metrics: BacktestMetricPayload | null
+  inSampleMetrics: BacktestMetricPayload | null
+  outSampleMetrics: BacktestMetricPayload | null
+  inSampleEndDate: string | null
+  equityCurve: BacktestEquityPointPayload[]
+}
+
+export interface WalkForwardFoldPayload {
+  foldIndex: number
+  trainStart: string
+  trainEnd: string
+  testStart: string
+  testEnd: string
+  trainReturn: number
+  testReturn: number
+  trainSharpe: number
+  testSharpe: number
+  trainMaxDd: number
+  testMaxDd: number
+}
+
+export interface SensitivityRunPayload {
+  kind: 'param' | 'slippage'
+  label: string
+  isBaseline: boolean
+  cumulativeReturn: number
+  annualReturn: number
+  maxDrawdown: number
+  sharpeRatio: number
+  winRate: number
+  turnover: number
+}
+
+export interface OverfitComponentPayload {
+  name: string
+  score: number
+  detail: string
+}
+
+export interface OverfitAssessmentPayload {
+  score: number
+  level: 'low' | 'medium' | 'high'
+  components: OverfitComponentPayload[]
+}
+
+export interface BacktestTradePayload {
+  tradeDate: string
+  symbol: string
+  side: string
+  quantity: number
+  price: number
+  amount: number
+  targetWeight: number
+  totalCost: number
+  netCashFlow: number
+  reason: string | null
+}
+
+export interface BacktestReportPayload {
+  taskId: string
+  runId: string | null
+  summary: BacktestTaskResult
+  walkForwardFolds: WalkForwardFoldPayload[]
+  sensitivityRuns: SensitivityRunPayload[]
+  overfit: OverfitAssessmentPayload | null
+  trades: BacktestTradePayload[]
+  featureUsage: { featureId: string; featureName: string; featureVersion: string; role: string | null }[]
+  lineageNodeCount: number
+  lineageEdgeCount: number
+}
+
+export interface BacktestCreatePayload {
+  universe: string[]
+  startDate: string
+  endDate: string
+  strategyName?: string
+  initialCash?: number
+  inSampleEndDate?: string
+  strategyParams?: Record<string, unknown>
+  costConfig?: {
+    commissionRate?: number
+    minCommission?: number
+    stampTaxRate?: number
+    slippageBps?: number
+  }
+}
+
+export interface WalkForwardCreatePayload extends BacktestCreatePayload {
+  folds?: number
+  trainRatio?: number
+}
+
+// ── Phase 4 paper-trading types ──────────────────────────────────────────
+
+export interface PaperAccount {
+  id: string
+  name: string
+  ownerId: string
+  strategyId: string | null
+  strategyVersionId: string | null
+  market: string
+  baseCurrency: string
+  initialCash: number
+  cash: number
+  inceptionDate: string | null
+  lastProcessedDate: string | null
+  peakNav: number | null
+  status: string
+}
+
+export interface PaperAccountCreatePayload {
+  name: string
+  ownerId?: string
+  strategyId?: string
+  strategyVersionId?: string
+  market?: string
+  baseCurrency?: string
+  initialCash?: number
+  inceptionDate?: string
+  costConfig?: {
+    commission_rate?: number
+    min_commission?: number
+    stamp_tax_rate?: number
+    slippage_bps?: number
+  }
+}
+
+export interface PaperPosition {
+  symbol: string
+  quantity: number
+  avgCost: number
+  lastPrice: number | null
+  marketValue: number
+  weight: number
+}
+
+export interface PaperOrder {
+  id: string
+  accountId: string
+  strategyId: string | null
+  tradeDate: string
+  symbol: string
+  side: string
+  targetWeight: number
+  targetQuantity: number
+  filledQuantity: number
+  status: string
+  reason: string | null
+  rejectionReason: string | null
+}
+
+export interface PaperFill {
+  id: string
+  orderId: string
+  tradeDate: string
+  symbol: string
+  side: string
+  quantity: number
+  price: number
+  amount: number
+  commission: number
+  stampTax: number
+  slippage: number
+  totalCost: number
+}
+
+export interface PaperNavPoint {
+  tradeDate: string
+  nav: number
+  cash: number
+  marketValue: number
+  dailyReturn: number | null
+  drawdown: number | null
+}
+
+export interface PaperRiskBreach {
+  id: string
+  tradeDate: string
+  rule: string
+  severity: string
+  detail: string | null
+  status: string
+}
+
+export interface RunEodSummary {
+  accountId: string
+  tradeDate: string
+  ordersCreated: number
+  ordersFilled: number
+  ordersRejected: number
+  breaches: number
+  nav: number | null
 }
 
 type DashboardOverview = MockData['dashboard']
@@ -107,6 +330,8 @@ export const api = {
         progress: number
         stage: string | null
         strategyId: string | null
+        backtestTaskId: string | null
+        backtestRunId: string | null
         error: string | null
       }>(`/strategies/tasks/${encodeURIComponent(taskId)}`, () => ({
         id: taskId,
@@ -114,6 +339,8 @@ export const api = {
         progress: 100,
         stage: 'failed',
         strategyId: null,
+        backtestTaskId: null,
+        backtestRunId: null,
         error: 'Strategy task API unavailable',
       })),
     getFeed: () =>
@@ -129,6 +356,44 @@ export const api = {
   },
   backtest: {
     overview: () => getJson<MockData['backtest']>('/backtests/overview', () => mock.backtest),
+    runReal: (payload: BacktestCreatePayload) =>
+      postJson<BacktestTaskResult>('/backtests/', payload),
+    walkForward: (payload: WalkForwardCreatePayload) =>
+      postJson<{
+        taskId: string
+        runId: string
+        folds: WalkForwardFoldPayload[]
+        aggregate: BacktestMetricPayload
+      }>('/backtests/walk-forward', payload),
+    sensitivity: (payload: BacktestCreatePayload) =>
+      postJson<{ taskId: string; runId: string; runs: SensitivityRunPayload[] }>(
+        '/backtests/sensitivity',
+        payload,
+      ),
+    overfit: (taskId: string) =>
+      getJson<OverfitAssessmentPayload>(
+        `/backtests/${encodeURIComponent(taskId)}/overfit`,
+        () => ({ score: 0, level: 'high', components: [] }),
+      ),
+    trades: (taskId: string) =>
+      getJson<BacktestTradePayload[]>(
+        `/backtests/${encodeURIComponent(taskId)}/trades`,
+        () => [],
+      ),
+    report: (taskId: string) =>
+      getJson<BacktestReportPayload>(
+        `/backtests/${encodeURIComponent(taskId)}/report`,
+        () => {
+          throw new Error('report unavailable')
+        },
+      ),
+    detail: (taskId: string) =>
+      getJson<BacktestTaskResult>(
+        `/backtests/${encodeURIComponent(taskId)}`,
+        () => {
+          throw new Error('backtest detail unavailable')
+        },
+      ),
   },
   explain: {
     overview: () => getJson<MockData['explain']>('/explain/overview', () => mock.explain),
@@ -154,5 +419,47 @@ export const api = {
   },
   audit: {
     overview: () => getJson<MockData['audit']>('/audit/overview', () => mock.audit),
+  },
+  paper: {
+    createAccount: (payload: PaperAccountCreatePayload) =>
+      postJson<PaperAccount>('/paper/accounts', payload),
+    listAccounts: () => getJson<PaperAccount[]>('/paper/accounts', () => []),
+    getAccount: (accountId: string) =>
+      getJson<PaperAccount>(
+        `/paper/accounts/${encodeURIComponent(accountId)}`,
+        () => {
+          throw new Error('paper account unavailable')
+        },
+      ),
+    positions: (accountId: string) =>
+      getJson<PaperPosition[]>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/positions`,
+        () => [],
+      ),
+    orders: (accountId: string) =>
+      getJson<PaperOrder[]>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/orders`,
+        () => [],
+      ),
+    fills: (accountId: string) =>
+      getJson<PaperFill[]>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/fills`,
+        () => [],
+      ),
+    nav: (accountId: string) =>
+      getJson<PaperNavPoint[]>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/nav`,
+        () => [],
+      ),
+    breaches: (accountId: string) =>
+      getJson<PaperRiskBreach[]>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/breaches`,
+        () => [],
+      ),
+    runEod: (accountId: string, tradeDate: string) =>
+      postJson<RunEodSummary>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/run-eod`,
+        { tradeDate },
+      ),
   },
 }

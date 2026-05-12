@@ -95,6 +95,8 @@ class StrategyTaskOut(BaseModel):
     stage: str | None = None
     strategy_id: str | None = Field(default=None, alias="strategyId")
     agent_task_id: str | None = Field(default=None, alias="agentTaskId")
+    backtest_task_id: str | None = Field(default=None, alias="backtestTaskId")
+    backtest_run_id: str | None = Field(default=None, alias="backtestRunId")
     result: str | None = None
     error: str | None = None
     created_at: str = Field(alias="createdAt")

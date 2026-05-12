@@ -25,6 +25,15 @@ from app.domains.backtest.models import (  # noqa: F401
     StressResult,
 )
 from app.domains.data.models import MarketBarDaily  # noqa: F401
+from app.domains.execution.paper_models import (  # noqa: F401
+    PaperAccount,
+    PaperFill,
+    PaperNavPoint,
+    PaperOrder,
+    PaperPosition,
+    PaperPreTradeCheck,
+    PaperRiskBreach,
+)
 from app.domains.identity.models import Organization, Role, Session, User, UserRole  # noqa: F401
 from app.domains.strategy.models import (  # noqa: F401
     PipelineEvent,

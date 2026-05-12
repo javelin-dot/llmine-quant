@@ -109,6 +109,12 @@ class BacktestCreateIn(BaseModel):
     initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
     strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
     cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
+    in_sample_end_date: str | None = Field(
+        default=None,
+        alias="inSampleEndDate",
+        description="Inclusive split point — dates after this are OOS. "
+        "Must be within [startDate, endDate).",
+    )
 
 
 class BacktestMetricOut(BaseModel):
@@ -128,6 +134,124 @@ class BacktestEquityPointOut(BaseModel):
     trade_date: str = Field(alias="tradeDate")
     value: float
     drawdown: float | None = None
+    phase: str = "is"  # is / oos
+
+
+class WalkForwardFoldOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    fold_index: int = Field(alias="foldIndex")
+    train_start: str = Field(alias="trainStart")
+    train_end: str = Field(alias="trainEnd")
+    test_start: str = Field(alias="testStart")
+    test_end: str = Field(alias="testEnd")
+    train_return: float = Field(alias="trainReturn")
+    test_return: float = Field(alias="testReturn")
+    train_sharpe: float = Field(alias="trainSharpe")
+    test_sharpe: float = Field(alias="testSharpe")
+    train_max_dd: float = Field(alias="trainMaxDd")
+    test_max_dd: float = Field(alias="testMaxDd")
+
+
+class BacktestTradeOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    trade_date: str = Field(alias="tradeDate")
+    symbol: str
+    side: str
+    quantity: float
+    price: float
+    amount: float
+    target_weight: float = Field(alias="targetWeight")
+    total_cost: float = Field(alias="totalCost")
+    net_cash_flow: float = Field(alias="netCashFlow")
+    reason: str | None = None
+
+
+class BacktestReportOut(BaseModel):
+    """Unified report aggregating every Phase 3 artefact for a backtest task."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    run_id: str | None = Field(default=None, alias="runId")
+    summary: "BacktestTaskResultOut"
+    walk_forward_folds: list["WalkForwardFoldOut"] = Field(default_factory=list, alias="walkForwardFolds")
+    sensitivity_runs: list["SensitivityRunOut"] = Field(default_factory=list, alias="sensitivityRuns")
+    overfit: "OverfitAssessmentOut | None" = None
+    trades: list[BacktestTradeOut] = Field(default_factory=list)
+    feature_usage: list[dict[str, str | None]] = Field(default_factory=list, alias="featureUsage")
+    lineage_node_count: int = Field(default=0, alias="lineageNodeCount")
+    lineage_edge_count: int = Field(default=0, alias="lineageEdgeCount")
+
+
+class OverfitComponentOut(BaseModel):
+    name: str
+    score: float
+    detail: str
+
+
+class OverfitAssessmentOut(BaseModel):
+    score: int
+    level: str  # low / medium / high
+    components: list[OverfitComponentOut]
+
+
+class SensitivityRunOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    label: str
+    is_baseline: bool = Field(alias="isBaseline")
+    cumulative_return: float = Field(alias="cumulativeReturn")
+    annual_return: float = Field(alias="annualReturn")
+    max_drawdown: float = Field(alias="maxDrawdown")
+    sharpe_ratio: float = Field(alias="sharpeRatio")
+    win_rate: float = Field(alias="winRate")
+    turnover: float
+
+
+class SensitivityCreateIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    universe: list[str]
+    start_date: str = Field(alias="startDate")
+    end_date: str = Field(alias="endDate")
+    strategy_name: str = Field(default="dual_ma", alias="strategyName")
+    initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
+    strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
+    cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
+
+
+class SensitivityResultOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    run_id: str = Field(alias="runId")
+    runs: list[SensitivityRunOut]
+
+
+class WalkForwardCreateIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    universe: list[str]
+    start_date: str = Field(alias="startDate")
+    end_date: str = Field(alias="endDate")
+    strategy_name: str = Field(default="dual_ma", alias="strategyName")
+    initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
+    strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
+    cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
+    folds: int = Field(default=4, ge=2, le=20)
+    train_ratio: float = Field(default=0.7, ge=0.1, lt=1.0, alias="trainRatio")
+
+
+class WalkForwardResultOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    run_id: str = Field(alias="runId")
+    folds: list[WalkForwardFoldOut]
+    aggregate: "BacktestMetricOut"
 
 
 class BacktestTaskResultOut(BaseModel):
@@ -137,4 +261,7 @@ class BacktestTaskResultOut(BaseModel):
     status: str
     run_id: str | None = Field(default=None, alias="runId")
     metrics: BacktestMetricOut | None = None
+    in_sample_metrics: BacktestMetricOut | None = Field(default=None, alias="inSampleMetrics")
+    out_sample_metrics: BacktestMetricOut | None = Field(default=None, alias="outSampleMetrics")
+    in_sample_end_date: str | None = Field(default=None, alias="inSampleEndDate")
     equity_curve: list[BacktestEquityPointOut] = Field(default_factory=list, alias="equityCurve")

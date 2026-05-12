@@ -7,7 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.domains.data.models import MarketBarDaily
+from app.domains.data.models import (
+    FeatureSet,
+    FeatureUsage,
+    LineageEdge,
+    LineageNode,
+    MarketBarDaily,
+)
 from app.domains.data.schemas import (
     BiasGate,
     DataIncidentOut,
@@ -15,6 +21,8 @@ from app.domains.data.schemas import (
     DataScreen,
     DataSourceOut,
     DataSourceTier,
+    FeatureOut,
+    FeatureUsageOut,
     LatencyTrend,
     LineageNodeOut,
     LineageOut,
@@ -22,6 +30,7 @@ from app.domains.data.schemas import (
     MarketDataAkshareImportIn,
     MarketDataCsvImportIn,
     MarketDataImportSummary,
+    RunLineageOut,
 )
 from app.services.market_data_import import (
     MarketDataImportError,
@@ -211,6 +220,96 @@ async def get_latency_trend() -> LatencyTrend:
 async def get_lineage() -> LineageOut:
     """Return data lineage DAG."""
     return _LINEAGE
+
+
+@router.get("/features", response_model=list[FeatureOut])
+async def list_features(db: DbSession, limit: int = Query(default=50, ge=1, le=200)) -> list[FeatureOut]:
+    """List registered features (Feature Store)."""
+    rows = (
+        await db.execute(select(FeatureSet).order_by(FeatureSet.name, FeatureSet.version).limit(limit))
+    ).scalars().all()
+    return [
+        FeatureOut(
+            id=f.id,
+            name=f.name,
+            version=f.version,
+            kind=f.kind,
+            description=f.description,
+            computationWindow=f.computation_window,
+            validated=bool(f.validated),
+            permissionScope=f.permission_scope or "research",
+        )
+        for f in rows
+    ]
+
+
+@router.get("/features/usages", response_model=list[FeatureUsageOut])
+async def list_feature_usages(
+    db: DbSession,
+    strategy_version_id: str | None = Query(default=None),
+    backtest_run_id: str | None = Query(default=None),
+) -> list[FeatureUsageOut]:
+    """List FeatureUsage rows optionally filtered by strategy version or backtest run."""
+    stmt = select(FeatureUsage, FeatureSet).join(FeatureSet, FeatureSet.id == FeatureUsage.feature_id)
+    if strategy_version_id:
+        stmt = stmt.where(FeatureUsage.strategy_version_id == strategy_version_id)
+    if backtest_run_id:
+        stmt = stmt.where(FeatureUsage.backtest_run_id == backtest_run_id)
+    rows = (await db.execute(stmt.order_by(FeatureUsage.created_at.desc()).limit(200))).all()
+    return [
+        FeatureUsageOut(
+            featureId=u.feature_id,
+            featureName=f.name,
+            featureVersion=f.version,
+            strategyVersionId=u.strategy_version_id,
+            backtestRunId=u.backtest_run_id,
+            role=u.role,
+        )
+        for (u, f) in rows
+    ]
+
+
+@router.get("/lineage/runs/{run_id}", response_model=RunLineageOut)
+async def get_run_lineage(run_id: str, db: DbSession) -> RunLineageOut:
+    """Return the lineage DAG attached to a specific backtest run."""
+    edges = (
+        await db.execute(
+            select(LineageEdge).where(LineageEdge.backtest_run_id == run_id)
+        )
+    ).scalars().all()
+    if not edges:
+        raise HTTPException(status_code=404, detail="no lineage found for run")
+    node_ids = {e.from_node_id for e in edges} | {e.to_node_id for e in edges}
+    nodes = (
+        await db.execute(select(LineageNode).where(LineageNode.id.in_(node_ids)))
+    ).scalars().all()
+    return RunLineageOut(
+        runId=run_id,
+        nodes=[
+            LineageNodeOut(
+                id=n.id,
+                label=n.label,
+                tier=n.node_type,
+                tone=_tone_for_tier(n.node_type),
+                version=n.version,
+                permission=n.permission,
+            )
+            for n in nodes
+        ],
+        edges=[{"from": e.from_node_id, "to": e.to_node_id} for e in edges],
+    )
+
+
+def _tone_for_tier(tier: str) -> str:
+    return {
+        "raw": "gray",
+        "cleaned": "blue",
+        "feature": "green",
+        "strategy": "purple",
+        "run": "yellow",
+        "signal": "yellow",
+        "order": "red",
+    }.get(tier, "blue")
 
 
 @router.get("/incidents", response_model=list[DataIncidentOut])

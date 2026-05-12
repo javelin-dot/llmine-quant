@@ -72,6 +72,8 @@ def _task_out(task: StrategyTask) -> StrategyTaskOut:
         stage=stage,
         strategyId=task.strategy_id,
         agentTaskId=task.agent_task_id,
+        backtestTaskId=task.backtest_task_id,
+        backtestRunId=task.backtest_run_id,
         result=task.result,
         error=task.error,
         createdAt=task.created_at.isoformat() if task.created_at else "",

@@ -297,6 +297,30 @@ export default function StrategyDetailModal({ strategyId, onClose, onChanged }: 
                     )}
                   </div>
 
+                  {/* Params & Risk Rules */}
+                  {detail.versions[0] && (detail.versions[0].paramsSchema || detail.versions[0].riskRules) && (
+                    <div className="sd-params">
+                      {detail.versions[0].paramsSchema && (
+                        <div className="sd-param-block">
+                          <small>参数模板</small>
+                          <pre>{(() => {
+                            try { return JSON.stringify(JSON.parse(detail.versions[0].paramsSchema!), null, 2) }
+                            catch { return detail.versions[0].paramsSchema! }
+                          })()}</pre>
+                        </div>
+                      )}
+                      {detail.versions[0].riskRules && (
+                        <div className="sd-param-block">
+                          <small>风险规则</small>
+                          <pre>{(() => {
+                            try { return JSON.stringify(JSON.parse(detail.versions[0].riskRules!), null, 2) }
+                            catch { return detail.versions[0].riskRules! }
+                          })()}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Meta */}
                   <div className="sd-meta">
                     <span>创建于 {fmtTime(detail.createdAt)}</span>

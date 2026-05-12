@@ -13,7 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base_class import now_utc
-from app.domains.backtest.models import BacktestMetric, BacktestRun, BacktestTask, EquityPoint
+from app.domains.backtest.models import (
+    BacktestMetric,
+    BacktestRun,
+    BacktestTask,
+    BacktestTrade,
+    EquityPoint,
+    WalkForwardFold,
+)
 from app.domains.data.models import MarketBarDaily
 from app.domains.strategy.examples import create_builtin_strategy
 from app.domains.strategy.runtime import Position, StrategyBar, StrategyContext, StrategyRunner
@@ -99,6 +106,19 @@ class BacktestMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class WalkForwardFoldSummary:
+    """One walk-forward fold's train/test metrics (in-memory representation)."""
+
+    fold_index: int
+    train_start: str
+    train_end: str
+    test_start: str
+    test_end: str
+    train_metrics: "BacktestMetrics"
+    test_metrics: "BacktestMetrics"
+
+
+@dataclass(frozen=True, slots=True)
 class DailyBacktestResult:
     """Result of a completed daily backtest loop."""
 
@@ -115,11 +135,18 @@ class DailyBacktestResult:
     positions: tuple[PositionSnapshot, ...]
     task_id: str | None = None
     run_id: str | None = None
+    in_sample_end_date: str | None = None
+    is_metrics: BacktestMetrics | None = None
+    oos_metrics: BacktestMetrics | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DailyBacktestConfig:
-    """Configuration for a daily research backtest."""
+    """Configuration for a daily research backtest.
+
+    ``in_sample_end_date`` (inclusive) splits the run into IS / OOS segments.
+    When omitted, the full range is treated as in-sample.
+    """
 
     universe: tuple[str, ...]
     start_date: str
@@ -128,6 +155,7 @@ class DailyBacktestConfig:
     initial_cash: float = 1_000_000.0
     strategy_params: Mapping[str, Any] = field(default_factory=dict)
     cost_config: BacktestCostConfig = field(default_factory=BacktestCostConfig)
+    in_sample_end_date: str | None = None
 
     def __post_init__(self) -> None:
         if not self.universe:
@@ -138,6 +166,12 @@ class DailyBacktestConfig:
             raise ValueError("start_date cannot be after end_date")
         if self.initial_cash <= 0:
             raise ValueError("initial_cash must be positive")
+        if self.in_sample_end_date is not None:
+            if self.in_sample_end_date < self.start_date or self.in_sample_end_date >= self.end_date:
+                raise ValueError(
+                    "in_sample_end_date must be within [start_date, end_date) "
+                    "so the OOS segment has at least one day"
+                )
 
         object.__setattr__(self, "universe", tuple(symbol.upper() for symbol in self.universe))
         object.__setattr__(self, "strategy_params", dict(self.strategy_params))
@@ -215,6 +249,14 @@ class DailyBacktestEngine:
             equity_curve=equity_curve,
             trades=trades,
         )
+
+        is_metrics, oos_metrics = _segment_metrics(
+            initial_cash=config.initial_cash,
+            equity_curve=equity_curve,
+            trades=trades,
+            in_sample_end_date=config.in_sample_end_date,
+        )
+
         return DailyBacktestResult(
             strategy_name=strategy.name,
             start_date=trade_dates[0],
@@ -227,17 +269,21 @@ class DailyBacktestEngine:
             equity_curve=tuple(equity_curve),
             trades=tuple(trades),
             positions=final_positions,
+            in_sample_end_date=config.in_sample_end_date,
+            is_metrics=is_metrics,
+            oos_metrics=oos_metrics,
         )
 
     async def run_and_persist(
         self,
         config: DailyBacktestConfig,
         *,
+        strategy_version_id: str | None = None,
         priority: int = 3,
     ) -> DailyBacktestResult:
         """Execute a backtest and persist task, run, metrics and equity curve."""
         task = BacktestTask(
-            strategy_version_id=config.strategy_name,
+            strategy_version_id=strategy_version_id or config.strategy_name,
             config=_json_dumps(_config_payload(config)),
             status="running",
             priority=priority,
@@ -268,25 +314,44 @@ class DailyBacktestEngine:
             await self.session.commit()
             raise
 
-        self.session.add(
-            BacktestMetric(
-                run_id=run.id,
-                cumulative_return=result.metrics.cumulative_return,
-                annual_return=result.metrics.annual_return,
-                max_drawdown=result.metrics.max_drawdown,
-                sharpe_ratio=result.metrics.sharpe_ratio,
-                win_rate=result.metrics.win_rate,
-                turnover=result.metrics.turnover,
-            )
-        )
+        self.session.add(_metric_row(run.id, "all", result.metrics))
+        if result.is_metrics is not None:
+            self.session.add(_metric_row(run.id, "is", result.is_metrics))
+        if result.oos_metrics is not None:
+            self.session.add(_metric_row(run.id, "oos", result.oos_metrics))
+
+        split_date = config.in_sample_end_date
         for point in result.equity_curve:
+            phase = "is"
+            if split_date is not None and point.trade_date > split_date:
+                phase = "oos"
             self.session.add(
                 EquityPoint(
                     run_id=run.id,
                     trade_date=point.trade_date,
                     value=point.value,
                     drawdown=point.drawdown,
-                    phase="is",
+                    phase=phase,
+                )
+            )
+
+        for trade in result.trades:
+            self.session.add(
+                BacktestTrade(
+                    run_id=run.id,
+                    trade_date=trade.trade_date,
+                    symbol=trade.symbol,
+                    side=trade.side,
+                    quantity=trade.quantity,
+                    price=trade.price,
+                    amount=trade.amount,
+                    target_weight=trade.target_weight,
+                    commission=trade.commission,
+                    stamp_tax=trade.stamp_tax,
+                    slippage=trade.slippage,
+                    total_cost=trade.total_cost,
+                    net_cash_flow=trade.net_cash_flow,
+                    reason=trade.reason or None,
                 )
             )
 
@@ -296,6 +361,87 @@ class DailyBacktestEngine:
         await self.session.commit()
 
         return replace(result, task_id=task.id, run_id=run.id)
+
+    async def run_walk_forward(
+        self,
+        config: DailyBacktestConfig,
+        *,
+        folds: int = 4,
+        train_ratio: float = 0.7,
+        strategy_version_id: str | None = None,
+    ) -> tuple[DailyBacktestResult, list["WalkForwardFoldSummary"]]:
+        """Run a single full-range backtest then slice it into ``folds`` train/test windows.
+
+        For now we re-use the same parameters across folds (no per-fold optimisation),
+        so this is best understood as a fold-based OOS report. Each fold:
+            - train window = first ``train_ratio`` of the fold's slice
+            - test window  = remaining
+        and metrics are computed on the existing equity curve.
+        """
+        if folds < 2:
+            raise ValueError("walk-forward requires at least 2 folds")
+        if not 0.1 <= train_ratio < 1.0:
+            raise ValueError("train_ratio must be in [0.1, 1.0)")
+
+        result = await self.run_and_persist(config, strategy_version_id=strategy_version_id)
+        assert result.run_id is not None
+
+        points = list(result.equity_curve)
+        if len(points) < folds * 2:
+            raise BacktestDataError(
+                f"need at least {folds * 2} bars for {folds}-fold walk-forward, got {len(points)}"
+            )
+
+        fold_size = len(points) // folds
+        summaries: list[WalkForwardFoldSummary] = []
+        for i in range(folds):
+            window_start = i * fold_size
+            window_end = (i + 1) * fold_size if i < folds - 1 else len(points)
+            window = points[window_start:window_end]
+            split = max(1, min(len(window) - 1, int(len(window) * train_ratio)))
+            train = window[:split]
+            test = window[split:]
+            train_baseline = points[window_start - 1].value if window_start > 0 else config.initial_cash
+            train_metrics = _calculate_metrics(
+                initial_cash=train_baseline,
+                equity_curve=_rebase_drawdowns(train, baseline=train_baseline),
+                trades=[t for t in result.trades if train[0].trade_date <= t.trade_date <= train[-1].trade_date],
+            )
+            test_baseline = train[-1].value
+            test_metrics = _calculate_metrics(
+                initial_cash=test_baseline,
+                equity_curve=_rebase_drawdowns(test, baseline=test_baseline),
+                trades=[t for t in result.trades if test[0].trade_date <= t.trade_date <= test[-1].trade_date],
+            )
+            summary = WalkForwardFoldSummary(
+                fold_index=i,
+                train_start=train[0].trade_date,
+                train_end=train[-1].trade_date,
+                test_start=test[0].trade_date,
+                test_end=test[-1].trade_date,
+                train_metrics=train_metrics,
+                test_metrics=test_metrics,
+            )
+            summaries.append(summary)
+            self.session.add(
+                WalkForwardFold(
+                    run_id=result.run_id,
+                    fold_index=i,
+                    train_start=summary.train_start,
+                    train_end=summary.train_end,
+                    test_start=summary.test_start,
+                    test_end=summary.test_end,
+                    train_return=train_metrics.cumulative_return,
+                    test_return=test_metrics.cumulative_return,
+                    train_sharpe=train_metrics.sharpe_ratio,
+                    test_sharpe=test_metrics.sharpe_ratio,
+                    train_max_dd=train_metrics.max_drawdown,
+                    test_max_dd=test_metrics.max_drawdown,
+                    train_params_json=json.dumps(dict(config.strategy_params), ensure_ascii=False),
+                )
+            )
+        await self.session.commit()
+        return result, summaries
 
     async def _load_bars(self, config: DailyBacktestConfig) -> list[MarketBarDaily]:
         result = await self.session.execute(
@@ -311,7 +457,7 @@ class DailyBacktestEngine:
 
 
 def _config_payload(config: DailyBacktestConfig) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "universe": list(config.universe),
         "start_date": config.start_date,
         "end_date": config.end_date,
@@ -320,6 +466,85 @@ def _config_payload(config: DailyBacktestConfig) -> dict[str, Any]:
         "strategy_params": dict(config.strategy_params),
         "cost_config": asdict(config.cost_config),
     }
+    if config.in_sample_end_date is not None:
+        payload["in_sample_end_date"] = config.in_sample_end_date
+    return payload
+
+
+def _metric_row(run_id: str, segment: str, metrics: BacktestMetrics) -> BacktestMetric:
+    return BacktestMetric(
+        run_id=run_id,
+        segment=segment,
+        cumulative_return=metrics.cumulative_return,
+        annual_return=metrics.annual_return,
+        max_drawdown=metrics.max_drawdown,
+        sharpe_ratio=metrics.sharpe_ratio,
+        win_rate=metrics.win_rate,
+        turnover=metrics.turnover,
+    )
+
+
+def _segment_metrics(
+    *,
+    initial_cash: float,
+    equity_curve: Sequence[DailyEquityPoint],
+    trades: Sequence[ExecutedTrade],
+    in_sample_end_date: str | None,
+) -> tuple[BacktestMetrics | None, BacktestMetrics | None]:
+    """Compute IS / OOS metrics when a split date is provided.
+
+    For OOS, peg the baseline to the equity value at the split boundary so the
+    OOS cumulative return is measured from the OOS start (not the IS start).
+    """
+    if in_sample_end_date is None or not equity_curve:
+        return (None, None)
+
+    is_points = [p for p in equity_curve if p.trade_date <= in_sample_end_date]
+    oos_points = [p for p in equity_curve if p.trade_date > in_sample_end_date]
+    if not is_points or not oos_points:
+        return (None, None)
+
+    is_trades = [t for t in trades if t.trade_date <= in_sample_end_date]
+    oos_trades = [t for t in trades if t.trade_date > in_sample_end_date]
+
+    # IS segment uses the original initial_cash baseline.
+    is_metrics = _calculate_metrics(
+        initial_cash=initial_cash,
+        equity_curve=_rebase_drawdowns(is_points),
+        trades=is_trades,
+    )
+
+    # OOS baseline = last IS equity value, so cumulative / drawdown start fresh.
+    oos_baseline = is_points[-1].value
+    if oos_baseline <= 0:
+        return (is_metrics, None)
+    oos_metrics = _calculate_metrics(
+        initial_cash=oos_baseline,
+        equity_curve=_rebase_drawdowns(oos_points, baseline=oos_baseline),
+        trades=oos_trades,
+    )
+    return (is_metrics, oos_metrics)
+
+
+def _rebase_drawdowns(
+    points: Sequence[DailyEquityPoint], *, baseline: float | None = None
+) -> list[DailyEquityPoint]:
+    """Recompute drawdown relative to the running peak of the supplied window."""
+    rebased: list[DailyEquityPoint] = []
+    peak = baseline if baseline is not None else (points[0].value if points else 0.0)
+    for point in points:
+        peak = max(peak, point.value)
+        dd = point.value / peak - 1 if peak > 0 else 0.0
+        rebased.append(
+            DailyEquityPoint(
+                trade_date=point.trade_date,
+                value=point.value,
+                cash=point.cash,
+                drawdown=dd,
+                positions=point.positions,
+            )
+        )
+    return rebased
 
 
 def _json_dumps(value: Mapping[str, Any]) -> str:

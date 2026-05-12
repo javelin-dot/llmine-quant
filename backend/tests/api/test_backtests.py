@@ -158,6 +158,145 @@ async def test_imported_csv_data_can_run_example_strategy_backtest_with_metrics(
     ]
 
 
+async def test_create_backtest_with_in_sample_split_returns_segment_metrics(client_session):
+    """API surfaces IS/OOS metrics when `inSampleEndDate` is provided."""
+    client, session = client_session
+    await _seed_bars(session, "000001.SZ", [10, 11, 12, 13, 14, 13.5, 14.5, 15.5])
+
+    create_resp = await client.post(
+        "/api/v1/backtests/",
+        json={
+            "universe": ["000001.SZ"],
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-08",
+            "inSampleEndDate": "2024-01-04",
+            "initialCash": 1_000,
+            "strategyParams": {"short_window": 2, "long_window": 3, "target_gross": 0.5},
+            "costConfig": {
+                "commissionRate": 0,
+                "minCommission": 0,
+                "stampTaxRate": 0,
+                "slippageBps": 0,
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    body = create_resp.json()
+    assert body["inSampleEndDate"] == "2024-01-04"
+    assert body["inSampleMetrics"] is not None
+    assert body["outSampleMetrics"] is not None
+    assert body["metrics"] is not None  # full-range metrics still present
+
+    # Equity points carry the phase tag.
+    phases = {p["tradeDate"]: p["phase"] for p in body["equityCurve"]}
+    assert phases["2024-01-04"] == "is"
+    assert phases["2024-01-05"] == "oos"
+
+    # GET path returns the same shape from persisted rows.
+    fetched = (await client.get(f"/api/v1/backtests/{body['taskId']}")).json()
+    assert fetched["inSampleEndDate"] == "2024-01-04"
+    assert fetched["inSampleMetrics"] is not None
+    assert fetched["outSampleMetrics"] is not None
+    phases_get = {p["tradeDate"]: p["phase"] for p in fetched["equityCurve"]}
+    assert phases_get["2024-01-05"] == "oos"
+
+
+async def test_trades_and_report_endpoints_aggregate_phase3_artefacts(client_session):
+    """POST baseline + walk-forward + sensitivity, then GET /trades and /report."""
+    client, session = client_session
+    closes = [10 + i * 0.1 + (0.2 if i % 5 == 0 else 0.0) for i in range(20)]
+    await _seed_bars(session, "000001.SZ", closes)
+
+    # Baseline with IS/OOS split
+    create_resp = await client.post(
+        "/api/v1/backtests/",
+        json={
+            "universe": ["000001.SZ"],
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-20",
+            "inSampleEndDate": "2024-01-12",
+            "initialCash": 1_000,
+            "strategyParams": {"short_window": 2, "long_window": 3, "target_gross": 0.5},
+            "costConfig": {
+                "commissionRate": 0, "minCommission": 0, "stampTaxRate": 0, "slippageBps": 0
+            },
+        },
+    )
+    assert create_resp.status_code == 200
+    task_id = create_resp.json()["taskId"]
+
+    # /trades
+    trades_resp = await client.get(f"/api/v1/backtests/{task_id}/trades")
+    assert trades_resp.status_code == 200
+    trades = trades_resp.json()
+    # The dual_ma strategy produces at least one trade on this curve.
+    assert isinstance(trades, list)
+    if trades:
+        assert "reason" in trades[0]
+        assert trades[0]["reason"]  # rule explanation populated
+
+    # /report aggregates everything (walk-forward & sensitivity are empty here)
+    report_resp = await client.get(f"/api/v1/backtests/{task_id}/report")
+    assert report_resp.status_code == 200
+    report = report_resp.json()
+    assert report["taskId"] == task_id
+    assert report["summary"]["inSampleEndDate"] == "2024-01-12"
+    assert report["overfit"] is not None
+    assert isinstance(report["walkForwardFolds"], list)
+    assert isinstance(report["sensitivityRuns"], list)
+    assert isinstance(report["trades"], list)
+
+
+async def test_walk_forward_endpoint_persists_folds(client_session):
+    """POST /backtests/walk-forward returns N folds and writes them to DB."""
+    client, session = client_session
+    closes = [10 + i * 0.1 for i in range(20)]
+    await _seed_bars(session, "000001.SZ", closes)
+
+    resp = await client.post(
+        "/api/v1/backtests/walk-forward",
+        json={
+            "universe": ["000001.SZ"],
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-20",
+            "initialCash": 1_000,
+            "folds": 4,
+            "trainRatio": 0.7,
+            "strategyParams": {"short_window": 2, "long_window": 3, "target_gross": 0.5},
+            "costConfig": {
+                "commissionRate": 0,
+                "minCommission": 0,
+                "stampTaxRate": 0,
+                "slippageBps": 0,
+            },
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["taskId"]
+    assert body["runId"]
+    assert len(body["folds"]) == 4
+    assert all("trainStart" in f and "testEnd" in f for f in body["folds"])
+
+
+async def test_create_backtest_rejects_invalid_in_sample_end_date(client_session):
+    """API returns 400 when split date is outside the run range."""
+    client, session = client_session
+    await _seed_bars(session, "000001.SZ", [10, 11, 12, 13, 14])
+
+    resp = await client.post(
+        "/api/v1/backtests/",
+        json={
+            "universe": ["000001.SZ"],
+            "startDate": "2024-01-01",
+            "endDate": "2024-01-05",
+            "inSampleEndDate": "2024-01-05",  # equals end_date — leaves no OOS days
+        },
+    )
+    assert resp.status_code == 400
+    assert "in_sample_end_date" in resp.json()["detail"]
+
+
 async def _seed_bars(session, symbol: str, closes: list[float]) -> None:
     for index, close in enumerate(closes, start=1):
         trade_date = f"2024-01-{index:02d}"

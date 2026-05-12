@@ -11,6 +11,7 @@ from app.api.v1 import (
     data,
     execution,
     explain,
+    paper,
     portfolio,
     risk,
     security,
@@ -31,3 +32,4 @@ api_router.include_router(security.router, prefix="/security", tags=["Security &
 api_router.include_router(collaboration.router, prefix="/collaboration", tags=["Collaboration Lab"])
 api_router.include_router(audit.router, prefix="/audit", tags=["Audit & Compliance"])
 api_router.include_router(agents.router, prefix="/agents", tags=["Agent Orchestrator"])
+api_router.include_router(paper.router, prefix="/paper", tags=["Paper Trading"])

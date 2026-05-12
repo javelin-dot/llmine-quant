@@ -52,6 +52,8 @@ class StrategyTask(BaseModel):
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)  # queued / running / waiting_human / blocked / succeeded / failed / canceled
     agent_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     strategy_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    backtest_task_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    backtest_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

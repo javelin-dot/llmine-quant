@@ -45,6 +45,11 @@ from app.services.daily_backtest import (
     DailyBacktestEngine,
     DailyBacktestResult,
 )
+from app.services.feature_lineage import (
+    record_feature_usage,
+    upsert_features_from_spec,
+    write_lineage_for_run,
+)
 from app.services.strategy_generation_research import (
     discover_default_research_universe,
     spec_to_dual_ma_params,
@@ -187,7 +192,19 @@ class StrategyGenerationService:
                 correlation_id=correlation_id,
             )
 
-            # 4. research backtest (persisted dual_ma proxy from DSL + DB bars)
+            # 4. persist Strategy Version first (code snapshot) so backtest can reference it
+            version = await self._persist_version(strategy, code_text, metadata)
+            await self._stage(
+                task=task,
+                stage="version",
+                agent_role="strategy",
+                event="version.created",
+                progress=40,
+                detail={"versionId": version.id},
+                correlation_id=correlation_id,
+            )
+
+            # 5. research backtest (persisted dual_ma proxy from DSL + DB bars)
             spec_payload = metadata.get("params") or {}
             try:
                 gen_spec = parse_strategy_generation_spec(spec_payload)
@@ -207,9 +224,31 @@ class StrategyGenerationService:
             )
             engine = DailyBacktestEngine(self.session)
             try:
-                bt_result = await engine.run_and_persist(bt_config, priority=2)
+                bt_result = await engine.run_and_persist(bt_config, strategy_version_id=version.id, priority=2)
             except BacktestDataError as exc:
                 raise LLMException(f"research backtest failed: {exc}") from exc
+
+            # 5a. Feature Store + lineage (best-effort — won't fail the pipeline)
+            try:
+                features = await upsert_features_from_spec(self.session, gen_spec)
+                await record_feature_usage(
+                    self.session,
+                    features=features,
+                    strategy_version_id=version.id,
+                    backtest_run_id=bt_result.run_id,
+                    role="factor",
+                )
+                if bt_result.run_id is not None:
+                    await write_lineage_for_run(
+                        self.session,
+                        features=features,
+                        strategy_version_id=version.id,
+                        backtest_run_id=bt_result.run_id,
+                        universe=universe,
+                    )
+                await self.session.commit()
+            except Exception:  # noqa: BLE001
+                await self.session.rollback()
 
             backtest = _backtest_result_to_pipeline_dict(bt_result)
             await self._stage(
@@ -222,7 +261,7 @@ class StrategyGenerationService:
                 correlation_id=correlation_id,
             )
 
-            # 5. risk
+            # 6. risk
             risk_ok = self._check_risk(backtest, task.risk_profile)
             event = "risk.passed" if risk_ok else "risk.flagged"
             await self._stage(
@@ -237,10 +276,10 @@ class StrategyGenerationService:
             if not risk_ok:
                 raise LLMException("Risk bounds exceeded")
 
-            # 6. persist Strategy + Version
+            # 7. update Strategy from meta + link backtest
             await self._update_strategy_from_meta(strategy, metadata, backtest)
-            version = await self._persist_version(strategy, code_text, metadata)
-
+            task.backtest_task_id = bt_result.task_id
+            task.backtest_run_id = bt_result.run_id
             task.status = "succeeded"
             task.result = json.dumps(
                 {"strategyId": strategy.id, "versionId": version.id, **backtest},
@@ -267,8 +306,51 @@ class StrategyGenerationService:
                 confidence=backtest.get("confidence"),
             )
         except Exception as exc:  # noqa: BLE001
+            error_msg = str(exc)[:512]
             task.status = "failed"
-            task.error = str(exc)[:512]
+            task.error = error_msg
+
+            # Determine failure stage from exception type / message
+            exc_msg_lower = error_msg.lower()
+            if "risk bounds exceeded" in exc_msg_lower:
+                fail_stage = "risk"
+                fail_agent = "risk"
+                fail_event = "risk.failed"
+            elif "backtest" in exc_msg_lower or "no market bars" in exc_msg_lower:
+                fail_stage = "backtest"
+                fail_agent = "backtest"
+                fail_event = "backtest.failed"
+            elif "validation" in exc_msg_lower or "dsl" in exc_msg_lower or "ast" in exc_msg_lower:
+                fail_stage = "static_check"
+                fail_agent = "strategy"
+                fail_event = "code.validation_failed"
+            elif "generation" in exc_msg_lower or "structured" in exc_msg_lower:
+                fail_stage = "code_gen"
+                fail_agent = "strategy"
+                fail_event = "code.generation_failed"
+            else:
+                fail_stage = "pipeline"
+                fail_agent = "system"
+                fail_event = "pipeline.failed"
+
+            # Persist pipeline event for the failure
+            pe = PipelineEvent(
+                strategy_id=task.strategy_id or task.id,
+                stage=fail_stage,
+                event=fail_event,
+                progress=100,
+                detail=json.dumps({"error": error_msg, "exception_type": type(exc).__name__}, ensure_ascii=False),
+                trace_id=get_trace_id(),
+            )
+            self.session.add(pe)
+
+            # Update strategy status to reflect failure
+            if task.strategy_id:
+                strategy_obj = await self.session.get(Strategy, task.strategy_id)
+                if strategy_obj is not None:
+                    strategy_obj.status = "draft"
+                    strategy_obj.updated_at = now_utc()
+
             await self.session.commit()
             await self.session.refresh(task)
 
@@ -278,14 +360,14 @@ class StrategyGenerationService:
                 resource_id=task.id,
                 result="failure",
                 result_tone="red",
-                detail=str(exc)[:512],
+                detail=f"stage={fail_stage}; {error_msg}",
             )
             await self._broadcast(
                 task_id=task.id,
-                stage="failed",
-                event="task.failed",
+                stage=fail_stage,
+                event=fail_event,
                 progress=100,
-                detail={"error": str(exc)[:512]},
+                detail={"error": error_msg, "stage": fail_stage},
             )
 
         return task

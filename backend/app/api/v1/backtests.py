@@ -7,15 +7,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.domains.backtest.models import BacktestMetric, BacktestRun, BacktestTask, EquityPoint
+from app.domains.backtest.models import (
+    BacktestMetric,
+    BacktestRun,
+    BacktestTask,
+    BacktestTrade,
+    EquityPoint,
+    SensitivityRun as SensitivityRunModel,
+    WalkForwardFold as WalkForwardFoldModel,
+)
+from app.domains.data.models import FeatureSet, FeatureUsage, LineageEdge
 from app.domains.backtest.schemas import (
     BacktestComparisonRow,
     BacktestCostIn,
     BacktestCreateIn,
     BacktestEquityPointOut,
     BacktestMetricOut,
+    BacktestReportOut,
     BacktestScreen,
     BacktestTaskResultOut,
+    BacktestTradeOut,
     ConfidenceFeature,
     ConfidenceTower,
     CurvePoint,
@@ -23,9 +34,19 @@ from app.domains.backtest.schemas import (
     Kpi,
     ParameterHeatmap,
     StressScenario,
+    OverfitAssessmentOut,
+    OverfitComponentOut,
+    SensitivityCreateIn,
+    SensitivityResultOut,
+    SensitivityRunOut,
+    WalkForwardCreateIn,
     WalkForwardFold,
+    WalkForwardFoldOut,
+    WalkForwardResultOut,
 )
 from app.services.daily_backtest import BacktestCostConfig, BacktestDataError, DailyBacktestConfig, DailyBacktestEngine
+from app.services.overfitting import assess_overfitting
+from app.services.sensitivity import run_sensitivity_analysis
 
 router = APIRouter()
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -154,6 +175,102 @@ async def create_backtest_task(
     return _result_out(result)
 
 
+@router.post("/sensitivity", response_model=SensitivityResultOut)
+async def create_sensitivity_analysis(
+    payload: SensitivityCreateIn,
+    db: DbSession,
+) -> SensitivityResultOut:
+    """Run baseline backtest + small parameter and slippage sweep."""
+    engine = DailyBacktestEngine(db)
+    config = DailyBacktestConfig(
+        universe=tuple(payload.universe),
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        strategy_name=payload.strategy_name,
+        initial_cash=payload.initial_cash,
+        strategy_params=payload.strategy_params,
+        cost_config=_cost_config(payload.cost_config),
+    )
+    try:
+        baseline = await engine.run_and_persist(config)
+        assert baseline.run_id is not None
+        summaries = await run_sensitivity_analysis(engine, config, parent_run_id=baseline.run_id)
+    except (BacktestDataError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SensitivityResultOut(
+        task_id=baseline.task_id or "",
+        run_id=baseline.run_id,
+        runs=[
+            SensitivityRunOut(
+                kind=s.kind,
+                label=s.label,
+                is_baseline=s.is_baseline,
+                cumulative_return=s.metrics.cumulative_return,
+                annual_return=s.metrics.annual_return,
+                max_drawdown=s.metrics.max_drawdown,
+                sharpe_ratio=s.metrics.sharpe_ratio,
+                win_rate=s.metrics.win_rate,
+                turnover=s.metrics.turnover,
+            )
+            for s in summaries
+        ],
+    )
+
+
+@router.post("/walk-forward", response_model=WalkForwardResultOut)
+async def create_walk_forward_backtest(
+    payload: WalkForwardCreateIn,
+    db: DbSession,
+) -> WalkForwardResultOut:
+    """Run a walk-forward analysis and persist folds + parent backtest."""
+    engine = DailyBacktestEngine(db)
+    config = DailyBacktestConfig(
+        universe=tuple(payload.universe),
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        strategy_name=payload.strategy_name,
+        initial_cash=payload.initial_cash,
+        strategy_params=payload.strategy_params,
+        cost_config=_cost_config(payload.cost_config),
+    )
+    try:
+        result, summaries = await engine.run_walk_forward(
+            config, folds=payload.folds, train_ratio=payload.train_ratio
+        )
+    except (BacktestDataError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return WalkForwardResultOut(
+        task_id=result.task_id or "",
+        run_id=result.run_id or "",
+        aggregate=BacktestMetricOut(
+            cumulative_return=result.metrics.cumulative_return,
+            annual_return=result.metrics.annual_return,
+            max_drawdown=result.metrics.max_drawdown,
+            sharpe_ratio=result.metrics.sharpe_ratio,
+            win_rate=result.metrics.win_rate,
+            turnover=result.metrics.turnover,
+        ),
+        folds=[
+            WalkForwardFoldOut(
+                fold_index=s.fold_index,
+                train_start=s.train_start,
+                train_end=s.train_end,
+                test_start=s.test_start,
+                test_end=s.test_end,
+                train_return=s.train_metrics.cumulative_return,
+                test_return=s.test_metrics.cumulative_return,
+                train_sharpe=s.train_metrics.sharpe_ratio,
+                test_sharpe=s.test_metrics.sharpe_ratio,
+                train_max_dd=s.train_metrics.max_drawdown,
+                test_max_dd=s.test_metrics.max_drawdown,
+            )
+            for s in summaries
+        ],
+    )
+
+
 @router.get("/{task_id}", response_model=BacktestTaskResultOut)
 async def get_backtest_task(task_id: str, db: DbSession) -> BacktestTaskResultOut:
     """Get a persisted backtest task and its latest run result."""
@@ -172,9 +289,9 @@ async def get_backtest_task(task_id: str, db: DbSession) -> BacktestTaskResultOu
     if run is None:
         return BacktestTaskResultOut(task_id=task.id, status=task.status)
 
-    metric = (
-        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run.id).limit(1))
-    ).scalar_one_or_none()
+    metrics = (
+        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run.id))
+    ).scalars().all()
     equity_points = (
         await db.execute(
             select(EquityPoint)
@@ -182,7 +299,226 @@ async def get_backtest_task(task_id: str, db: DbSession) -> BacktestTaskResultOu
             .order_by(EquityPoint.trade_date)
         )
     ).scalars().all()
-    return _persisted_result_out(task, run, metric, equity_points)
+    return _persisted_result_out(
+        task, run, list(metrics), list(equity_points), _split_date_from_task(task)
+    )
+
+
+@router.get("/{task_id}/trades", response_model=list[BacktestTradeOut])
+async def get_backtest_trades(
+    task_id: str,
+    db: DbSession,
+    limit: int = 500,
+) -> list[BacktestTradeOut]:
+    """Return persisted trades for a backtest task — each carries the rule reason."""
+    task = await db.get(BacktestTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="backtest task not found")
+    run = (
+        await db.execute(
+            select(BacktestRun)
+            .where(BacktestRun.task_id == task.id)
+            .order_by(BacktestRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        return []
+    trades = (
+        await db.execute(
+            select(BacktestTrade)
+            .where(BacktestTrade.run_id == run.id)
+            .order_by(BacktestTrade.trade_date.asc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [
+        BacktestTradeOut(
+            trade_date=t.trade_date,
+            symbol=t.symbol,
+            side=t.side,
+            quantity=t.quantity,
+            price=t.price,
+            amount=t.amount,
+            target_weight=t.target_weight,
+            total_cost=t.total_cost,
+            net_cash_flow=t.net_cash_flow,
+            reason=t.reason,
+        )
+        for t in trades
+    ]
+
+
+@router.get("/{task_id}/report", response_model=BacktestReportOut)
+async def get_backtest_report(task_id: str, db: DbSession) -> BacktestReportOut:
+    """Unified Phase 3 report — IS/OOS + walk-forward + sensitivity + overfit + trades + lineage."""
+    task = await db.get(BacktestTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="backtest task not found")
+    summary = await get_backtest_task(task_id, db)
+    run_id = summary.run_id
+
+    folds: list[WalkForwardFoldOut] = []
+    sens: list[SensitivityRunOut] = []
+    overfit: OverfitAssessmentOut | None = None
+    trades: list[BacktestTradeOut] = []
+    feature_rows: list[dict[str, str | None]] = []
+    lineage_node_count = 0
+    lineage_edge_count = 0
+
+    if run_id:
+        fold_rows = (
+            await db.execute(
+                select(WalkForwardFoldModel)
+                .where(WalkForwardFoldModel.run_id == run_id)
+                .order_by(WalkForwardFoldModel.fold_index)
+            )
+        ).scalars().all()
+        folds = [
+            WalkForwardFoldOut(
+                fold_index=f.fold_index,
+                train_start=f.train_start,
+                train_end=f.train_end,
+                test_start=f.test_start,
+                test_end=f.test_end,
+                train_return=f.train_return or 0.0,
+                test_return=f.test_return or 0.0,
+                train_sharpe=f.train_sharpe or 0.0,
+                test_sharpe=f.test_sharpe or 0.0,
+                train_max_dd=f.train_max_dd or 0.0,
+                test_max_dd=f.test_max_dd or 0.0,
+            )
+            for f in fold_rows
+        ]
+
+        sens_rows = (
+            await db.execute(
+                select(SensitivityRunModel).where(SensitivityRunModel.parent_run_id == run_id)
+            )
+        ).scalars().all()
+        sens = [
+            SensitivityRunOut(
+                kind=s.kind,
+                label=s.label,
+                is_baseline=bool(s.is_baseline),
+                cumulative_return=s.cumulative_return or 0.0,
+                annual_return=s.annual_return or 0.0,
+                max_drawdown=s.max_drawdown or 0.0,
+                sharpe_ratio=s.sharpe_ratio or 0.0,
+                win_rate=s.win_rate or 0.0,
+                turnover=s.turnover or 0.0,
+            )
+            for s in sens_rows
+        ]
+
+        # Re-compute (and persist) overfit so the report is always fresh.
+        assessment = await assess_overfitting(db, run_id)
+        overfit = OverfitAssessmentOut(
+            score=assessment.score,
+            level=assessment.level,
+            components=[
+                OverfitComponentOut(name=c.name, score=c.score, detail=c.detail)
+                for c in assessment.components
+            ],
+        )
+
+        trade_rows = (
+            await db.execute(
+                select(BacktestTrade)
+                .where(BacktestTrade.run_id == run_id)
+                .order_by(BacktestTrade.trade_date.asc())
+            )
+        ).scalars().all()
+        trades = [
+            BacktestTradeOut(
+                trade_date=t.trade_date,
+                symbol=t.symbol,
+                side=t.side,
+                quantity=t.quantity,
+                price=t.price,
+                amount=t.amount,
+                target_weight=t.target_weight,
+                total_cost=t.total_cost,
+                net_cash_flow=t.net_cash_flow,
+                reason=t.reason,
+            )
+            for t in trade_rows
+        ]
+
+        usage_rows = (
+            await db.execute(
+                select(FeatureUsage, FeatureSet)
+                .join(FeatureSet, FeatureSet.id == FeatureUsage.feature_id)
+                .where(FeatureUsage.backtest_run_id == run_id)
+            )
+        ).all()
+        feature_rows = [
+            {
+                "featureId": u.feature_id,
+                "featureName": f.name,
+                "featureVersion": f.version,
+                "role": u.role,
+            }
+            for (u, f) in usage_rows
+        ]
+
+        edge_rows = (
+            await db.execute(select(LineageEdge).where(LineageEdge.backtest_run_id == run_id))
+        ).scalars().all()
+        lineage_edge_count = len(edge_rows)
+        lineage_node_count = len({e.from_node_id for e in edge_rows} | {e.to_node_id for e in edge_rows})
+
+    return BacktestReportOut(
+        task_id=task_id,
+        run_id=run_id,
+        summary=summary,
+        walk_forward_folds=folds,
+        sensitivity_runs=sens,
+        overfit=overfit,
+        trades=trades,
+        feature_usage=feature_rows,
+        lineage_node_count=lineage_node_count,
+        lineage_edge_count=lineage_edge_count,
+    )
+
+
+@router.get("/{task_id}/overfit", response_model=OverfitAssessmentOut)
+async def get_overfit_assessment(task_id: str, db: DbSession) -> OverfitAssessmentOut:
+    """Compute (or recompute) the overfitting score for a backtest task."""
+    task = await db.get(BacktestTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="backtest task not found")
+    run = (
+        await db.execute(
+            select(BacktestRun)
+            .where(BacktestRun.task_id == task.id)
+            .order_by(BacktestRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="no run found for task")
+
+    assessment = await assess_overfitting(db, run.id)
+    return OverfitAssessmentOut(
+        score=assessment.score,
+        level=assessment.level,
+        components=[
+            OverfitComponentOut(name=c.name, score=c.score, detail=c.detail)
+            for c in assessment.components
+        ],
+    )
+
+
+def _split_date_from_task(task: BacktestTask) -> str | None:
+    import json as _json
+
+    if not task.config:
+        return None
+    try:
+        return _json.loads(task.config).get("in_sample_end_date")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _daily_backtest_config(payload: BacktestCreateIn) -> DailyBacktestConfig:
@@ -194,6 +530,7 @@ def _daily_backtest_config(payload: BacktestCreateIn) -> DailyBacktestConfig:
         initial_cash=payload.initial_cash,
         strategy_params=payload.strategy_params,
         cost_config=_cost_config(payload.cost_config),
+        in_sample_end_date=payload.in_sample_end_date,
     )
 
 
@@ -207,23 +544,35 @@ def _cost_config(payload: BacktestCostIn) -> BacktestCostConfig:
 
 
 def _result_out(result) -> BacktestTaskResultOut:
+    def _runtime_metrics(m) -> BacktestMetricOut:
+        return BacktestMetricOut(
+            cumulative_return=m.cumulative_return,
+            annual_return=m.annual_return,
+            max_drawdown=m.max_drawdown,
+            sharpe_ratio=m.sharpe_ratio,
+            win_rate=m.win_rate,
+            turnover=m.turnover,
+        )
+
+    split_date = result.in_sample_end_date
+
+    def _phase_for(date_str: str) -> str:
+        return "oos" if split_date is not None and date_str > split_date else "is"
+
     return BacktestTaskResultOut(
         task_id=result.task_id or "",
         status="completed",
         run_id=result.run_id,
-        metrics=BacktestMetricOut(
-            cumulative_return=result.metrics.cumulative_return,
-            annual_return=result.metrics.annual_return,
-            max_drawdown=result.metrics.max_drawdown,
-            sharpe_ratio=result.metrics.sharpe_ratio,
-            win_rate=result.metrics.win_rate,
-            turnover=result.metrics.turnover,
-        ),
+        metrics=_runtime_metrics(result.metrics),
+        in_sample_metrics=_runtime_metrics(result.is_metrics) if result.is_metrics else None,
+        out_sample_metrics=_runtime_metrics(result.oos_metrics) if result.oos_metrics else None,
+        in_sample_end_date=split_date,
         equity_curve=[
             BacktestEquityPointOut(
                 trade_date=point.trade_date,
                 value=point.value,
                 drawdown=point.drawdown,
+                phase=_phase_for(point.trade_date),
             )
             for point in result.equity_curve
         ],
@@ -233,26 +582,34 @@ def _result_out(result) -> BacktestTaskResultOut:
 def _persisted_result_out(
     task: BacktestTask,
     run: BacktestRun,
-    metric: BacktestMetric | None,
+    metrics: list[BacktestMetric],
     equity_points: list[EquityPoint],
+    in_sample_end_date: str | None,
 ) -> BacktestTaskResultOut:
+    by_segment: dict[str, BacktestMetric] = {m.segment: m for m in metrics}
     return BacktestTaskResultOut(
         task_id=task.id,
         status=task.status,
         run_id=run.id,
-        metrics=_metric_out(metric) if metric is not None else None,
+        metrics=_metric_out(by_segment.get("all")) if "all" in by_segment else None,
+        in_sample_metrics=_metric_out(by_segment.get("is")) if "is" in by_segment else None,
+        out_sample_metrics=_metric_out(by_segment.get("oos")) if "oos" in by_segment else None,
+        in_sample_end_date=in_sample_end_date,
         equity_curve=[
             BacktestEquityPointOut(
                 trade_date=point.trade_date,
                 value=point.value,
                 drawdown=point.drawdown,
+                phase=point.phase or "is",
             )
             for point in equity_points
         ],
     )
 
 
-def _metric_out(metric: BacktestMetric) -> BacktestMetricOut:
+def _metric_out(metric: BacktestMetric | None) -> BacktestMetricOut | None:
+    if metric is None:
+        return None
     return BacktestMetricOut(
         cumulative_return=metric.cumulative_return or 0.0,
         annual_return=metric.annual_return or 0.0,

@@ -63,6 +63,32 @@ class LineageOut(BaseModel):
     edges: list[dict[str, str]]
 
 
+class FeatureOut(BaseModel):
+    id: str
+    name: str
+    version: str
+    kind: str | None = None
+    description: str | None = None
+    computationWindow: int | None = None
+    validated: bool = False
+    permissionScope: str = "research"
+
+
+class FeatureUsageOut(BaseModel):
+    featureId: str
+    featureName: str
+    featureVersion: str
+    strategyVersionId: str
+    backtestRunId: str | None = None
+    role: str | None = None
+
+
+class RunLineageOut(BaseModel):
+    runId: str
+    nodes: list[LineageNodeOut]
+    edges: list[dict[str, str]]
+
+
 class DataIncidentOut(BaseModel):
     time: str
     source: str

@@ -89,6 +89,21 @@ class FeatureSet(BaseModel):
     lineage_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     validated: Mapped[bool] = mapped_column(default=False)
     validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)  # value / momentum / quality / volatility / ...
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dependencies_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    computation_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class FeatureUsage(BaseModel):
+    """Association between a strategy version and the features it consumes."""
+
+    __tablename__ = "feature_usages"
+
+    feature_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    strategy_version_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    backtest_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    role: Mapped[str | None] = mapped_column(String(32), nullable=True)  # factor / filter / signal
 
 
 class LineageNode(BaseModel):
@@ -100,6 +115,8 @@ class LineageNode(BaseModel):
     label: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     permission: Mapped[str] = mapped_column(String(64), default="read")
+    ref_table: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
 
 class LineageEdge(BaseModel):
@@ -109,6 +126,7 @@ class LineageEdge(BaseModel):
 
     from_node_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     to_node_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    backtest_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
 
 class DataIncident(BaseModel):
