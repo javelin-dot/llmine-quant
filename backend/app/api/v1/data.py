@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -31,6 +31,7 @@ from app.domains.data.schemas import (
     MarketDataCsvImportIn,
     MarketDataImportSummary,
     RunLineageOut,
+    SymbolSummary,
 )
 from app.services.market_data_import import (
     MarketDataImportError,
@@ -220,6 +221,32 @@ async def get_latency_trend() -> LatencyTrend:
 async def get_lineage() -> LineageOut:
     """Return data lineage DAG."""
     return _LINEAGE
+
+
+@router.get("/symbols", response_model=list[SymbolSummary])
+async def list_market_symbols(db: DbSession, limit: int = 500) -> list[SymbolSummary]:
+    """List distinct symbols that have bars in the local DB, with coverage info."""
+    stmt = (
+        select(
+            MarketBarDaily.symbol.label("symbol"),
+            func.count(MarketBarDaily.id).label("bars"),
+            func.min(MarketBarDaily.trade_date).label("start_date"),
+            func.max(MarketBarDaily.trade_date).label("end_date"),
+        )
+        .group_by(MarketBarDaily.symbol)
+        .order_by(func.count(MarketBarDaily.id).desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    return [
+        SymbolSummary(
+            symbol=row.symbol,
+            bars=int(row.bars),
+            startDate=str(row.start_date),
+            endDate=str(row.end_date),
+        )
+        for row in rows
+    ]
 
 
 @router.get("/features", response_model=list[FeatureOut])

@@ -63,6 +63,15 @@ class LineageOut(BaseModel):
     edges: list[dict[str, str]]
 
 
+class SymbolSummary(BaseModel):
+    """Summary row for a tradable symbol available in the local market_bars table."""
+
+    symbol: str
+    bars: int
+    startDate: str
+    endDate: str
+
+
 class FeatureOut(BaseModel):
     id: str
     name: str

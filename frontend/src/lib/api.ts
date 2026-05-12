@@ -171,6 +171,30 @@ export interface BacktestTradePayload {
   reason: string | null
 }
 
+export interface BacktestTaskListPayload {
+  taskId: string
+  runId: string | null
+  status: string
+  strategyVersionId: string | null
+  strategyName: string | null
+  startDate: string | null
+  endDate: string | null
+  inSampleEndDate: string | null
+  universe: string[]
+  cumulativeReturn: number | null
+  sharpeRatio: number | null
+  maxDrawdown: number | null
+  overfitLevel: string | null
+  createdAt: string
+}
+
+export interface SymbolSummary {
+  symbol: string
+  bars: number
+  startDate: string
+  endDate: string
+}
+
 export interface BacktestReportPayload {
   taskId: string
   runId: string | null
@@ -394,6 +418,8 @@ export const api = {
           throw new Error('backtest detail unavailable')
         },
       ),
+    list: (limit = 20) =>
+      getJson<BacktestTaskListPayload[]>(`/backtests/?limit=${limit}`, () => []),
   },
   explain: {
     overview: () => getJson<MockData['explain']>('/explain/overview', () => mock.explain),
@@ -409,6 +435,7 @@ export const api = {
   },
   data: {
     overview: () => getJson<MockData['data']>('/data/overview', () => mock.data),
+    symbols: () => getJson<SymbolSummary[]>('/data/symbols', () => []),
   },
   security: {
     overview: () => getJson<MockData['security']>('/security/overview', () => mock.security),

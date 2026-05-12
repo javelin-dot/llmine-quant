@@ -25,6 +25,7 @@ from app.domains.backtest.schemas import (
     BacktestMetricOut,
     BacktestReportOut,
     BacktestScreen,
+    BacktestTaskListItem,
     BacktestTaskResultOut,
     BacktestTradeOut,
     ConfidenceFeature,
@@ -302,6 +303,66 @@ async def get_backtest_task(task_id: str, db: DbSession) -> BacktestTaskResultOu
     return _persisted_result_out(
         task, run, list(metrics), list(equity_points), _split_date_from_task(task)
     )
+
+
+@router.get("/", response_model=list[BacktestTaskListItem])
+async def list_backtest_tasks(db: DbSession, limit: int = 20) -> list[BacktestTaskListItem]:
+    """List recent backtest tasks with summary metrics for the workbench history panel."""
+    import json as _json
+
+    task_rows = (
+        await db.execute(
+            select(BacktestTask)
+            .where(BacktestTask.deleted_at.is_(None))
+            .order_by(BacktestTask.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    items: list[BacktestTaskListItem] = []
+    for t in task_rows:
+        config_payload: dict = {}
+        if t.config:
+            try:
+                config_payload = _json.loads(t.config)
+            except Exception:  # noqa: BLE001
+                config_payload = {}
+        run = (
+            await db.execute(
+                select(BacktestRun)
+                .where(BacktestRun.task_id == t.id)
+                .order_by(BacktestRun.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        metric = None
+        if run is not None:
+            metric = (
+                await db.execute(
+                    select(BacktestMetric).where(
+                        BacktestMetric.run_id == run.id, BacktestMetric.segment == "all"
+                    )
+                )
+            ).scalar_one_or_none()
+        items.append(
+            BacktestTaskListItem(
+                task_id=t.id,
+                run_id=run.id if run else None,
+                status=t.status,
+                strategy_version_id=t.strategy_version_id,
+                strategy_name=config_payload.get("strategy_name"),
+                start_date=config_payload.get("start_date"),
+                end_date=config_payload.get("end_date"),
+                in_sample_end_date=config_payload.get("in_sample_end_date"),
+                universe=list(config_payload.get("universe", [])),
+                cumulative_return=metric.cumulative_return if metric else None,
+                sharpe_ratio=metric.sharpe_ratio if metric else None,
+                max_drawdown=metric.max_drawdown if metric else None,
+                overfit_level=metric.overfit_level if metric else None,
+                created_at=t.created_at.isoformat() if t.created_at else "",
+            )
+        )
+    return items
 
 
 @router.get("/{task_id}/trades", response_model=list[BacktestTradeOut])

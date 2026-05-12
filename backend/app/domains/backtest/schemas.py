@@ -153,6 +153,27 @@ class WalkForwardFoldOut(BaseModel):
     test_max_dd: float = Field(alias="testMaxDd")
 
 
+class BacktestTaskListItem(BaseModel):
+    """One row in the recent-backtests list (lightweight, no equity curve)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str = Field(alias="taskId")
+    run_id: str | None = Field(default=None, alias="runId")
+    status: str
+    strategy_version_id: str | None = Field(default=None, alias="strategyVersionId")
+    strategy_name: str | None = Field(default=None, alias="strategyName")
+    start_date: str | None = Field(default=None, alias="startDate")
+    end_date: str | None = Field(default=None, alias="endDate")
+    in_sample_end_date: str | None = Field(default=None, alias="inSampleEndDate")
+    universe: list[str] = Field(default_factory=list)
+    cumulative_return: float | None = Field(default=None, alias="cumulativeReturn")
+    sharpe_ratio: float | None = Field(default=None, alias="sharpeRatio")
+    max_drawdown: float | None = Field(default=None, alias="maxDrawdown")
+    overfit_level: str | None = Field(default=None, alias="overfitLevel")
+    created_at: str = Field(alias="createdAt")
+
+
 class BacktestTradeOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

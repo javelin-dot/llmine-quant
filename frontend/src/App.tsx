@@ -39,6 +39,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [modal, setModal] = useState<ModalType | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [backtestContext, setBacktestContext] = useState<{ strategyId?: string; taskId?: string }>({})
   const [globalData, setGlobalData] = useState<{
     meta: { product: string; subtitle: string }
     system: { healthScore: number; healthStatusLabel: string; healthBarHeights: number[]; autopilot: boolean; riskGateLabel: string }
@@ -64,8 +65,23 @@ export default function App() {
   const closeModal = useCallback(() => setModal(null), [])
 
   const handleScreenNavigate = useCallback((target: string) => {
-    if ((VALID_SCREENS as string[]).includes(target)) {
-      switchScreen(target as Screen)
+    // Support compound targets like `backtest:strategyId=abc` or `backtest:taskId=xyz`.
+    const [base, rest] = target.split(':')
+    if ((VALID_SCREENS as string[]).includes(base)) {
+      if (base === 'backtest') {
+        if (rest) {
+          const ctx: { strategyId?: string; taskId?: string } = {}
+          for (const piece of rest.split('&')) {
+            const [k, v] = piece.split('=')
+            if (k === 'strategyId' && v) ctx.strategyId = decodeURIComponent(v)
+            if (k === 'taskId' && v) ctx.taskId = decodeURIComponent(v)
+          }
+          setBacktestContext(ctx)
+        } else {
+          setBacktestContext({})
+        }
+      }
+      switchScreen(base as Screen)
     }
   }, [switchScreen])
 
@@ -84,7 +100,14 @@ export default function App() {
       case 'strategy':
         return <Strategy onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'backtest':
-        return <Backtest onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+        return (
+          <Backtest
+            onNavigate={handleScreenNavigate}
+            onModal={handleScreenModal}
+            initialStrategyId={backtestContext.strategyId}
+            initialTaskId={backtestContext.taskId}
+          />
+        )
       case 'explain':
         return <Explain onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'portfolio':

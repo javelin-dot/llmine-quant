@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useStrategy } from '../../contexts/StrategyContext'
+import { api } from '../../lib/api'
 
 type SortKey = 'annualReturn' | 'maxDd' | 'sharpe' | 'oosScore' | 'name'
 type SortDir = 'asc' | 'desc'
@@ -47,10 +48,50 @@ interface StrategyMatrixProps {
   stageFilter?: string | null
 }
 
-export default function StrategyMatrix({ onOpenStrategy, highlightId, stageFilter }: StrategyMatrixProps) {
+export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId, stageFilter }: StrategyMatrixProps) {
   const data = useStrategy()
   const [sortKey, setSortKey] = useState<SortKey>('annualReturn')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [pendingAction, setPendingAction] = useState<{ rowId: string; action: string } | null>(null)
+  const [toast, setToast] = useState<{ tone: 'green' | 'red' | 'blue'; text: string } | null>(null)
+
+  const showToast = (tone: 'green' | 'red' | 'blue', text: string, durationMs = 3000) => {
+    setToast({ tone, text })
+    setTimeout(() => setToast(null), durationMs)
+  }
+
+  const handleAction = async (rowId: string, action: string) => {
+    if (pendingAction) return
+    if (action === '打开') {
+      onOpenStrategy?.(rowId)
+      return
+    }
+    if (action === '运行回测') {
+      // Navigate to Backtest Lab with strategy preset — workbench handles run.
+      onNavigate?.(`backtest:strategyId=${encodeURIComponent(rowId)}`)
+      return
+    }
+    setPendingAction({ rowId, action })
+    try {
+      if (action === '推送模拟盘') {
+        await api.strategy.update(rowId, { status: 'paper' })
+        showToast('green', '已推送至模拟盘')
+      } else if (action === '部署实盘') {
+        await api.strategy.update(rowId, { status: 'live' })
+        showToast('green', '已部署到实盘（需审批）')
+      } else if (action === '暂停') {
+        await api.strategy.update(rowId, { status: 'paused' })
+        showToast('blue', '策略已暂停')
+      } else if (action === '恢复') {
+        await api.strategy.update(rowId, { status: 'live' })
+        showToast('green', '策略已恢复')
+      }
+    } catch (err) {
+      showToast('red', `${action}失败: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setPendingAction(null)
+    }
+  }
 
   const rows = useMemo(() => {
     let filtered = data.matrix
@@ -118,6 +159,9 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId, stageFilte
             {rows.length} 个策略 · 策略组合、回测结果与部署状态
           </span>
         </div>
+        {toast && (
+          <div className={`matrix-toast matrix-toast-${toast.tone}`}>{toast.text}</div>
+        )}
       </div>
       <div className="strategy-matrix-table-wrap">
         <table className="strategy-matrix-table">
@@ -198,18 +242,22 @@ export default function StrategyMatrix({ onOpenStrategy, highlightId, stageFilte
                   </td>
                   <td className="td-actions">
                     <div className="matrix-actions">
-                      {actions.map((a) => (
-                        <button
-                          key={a}
-                          className="matrix-action-btn"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (a === '打开') onOpenStrategy?.(r.id)
-                          }}
-                        >
-                          {a}
-                        </button>
-                      ))}
+                      {actions.map((a) => {
+                        const isPending = pendingAction?.rowId === r.id && pendingAction.action === a
+                        return (
+                          <button
+                            key={a}
+                            className="matrix-action-btn"
+                            disabled={isPending}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleAction(r.id, a)
+                            }}
+                          >
+                            {isPending ? '处理中…' : a}
+                          </button>
+                        )
+                      })}
                     </div>
                   </td>
                 </tr>
