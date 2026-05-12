@@ -1,6 +1,6 @@
 """Data domain models — sources, market data, features, lineage, incidents."""
 
-from sqlalchemy import Float, Integer, String, Text
+from sqlalchemy import Boolean, Float, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import BaseModel
@@ -41,9 +41,13 @@ class MarketBarDaily(BaseModel):
     """Daily OHLCV market data (stored in TimescaleDB in production)."""
 
     __tablename__ = "market_bars_daily"
+    __table_args__ = (
+        UniqueConstraint("symbol", "trade_date", name="uq_market_bars_daily_symbol_trade_date"),
+    )
 
     symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     trade_date: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    prev_close: Mapped[float | None] = mapped_column(Float, nullable=True)
     open: Mapped[float] = mapped_column(Float, nullable=False)
     high: Mapped[float] = mapped_column(Float, nullable=False)
     low: Mapped[float] = mapped_column(Float, nullable=False)
@@ -52,10 +56,14 @@ class MarketBarDaily(BaseModel):
     amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     adjusted_close: Mapped[float | None] = mapped_column(Float, nullable=True)
     forward_factor: Mapped[float | None] = mapped_column(Float, nullable=True)
-    is_st: Mapped[bool] = mapped_column(default=False)
-    is_limit_up: Mapped[bool] = mapped_column(default=False)
-    is_limit_down: Mapped[bool] = mapped_column(default=False)
-    is_suspended: Mapped[bool] = mapped_column(default=False)
+    limit_up_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    limit_down_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_st: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_limit_up: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_limit_down: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_buy: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_sell: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class CorporateAction(BaseModel):

@@ -36,6 +36,7 @@ class BacktestMetric(BaseModel):
     __tablename__ = "backtest_metrics"
 
     run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    cumulative_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     annual_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_drawdown: Mapped[float | None] = mapped_column(Float, nullable=True)
     sharpe_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)

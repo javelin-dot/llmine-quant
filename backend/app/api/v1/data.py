@@ -1,9 +1,13 @@
 """Data Service API — data sources, market data, lineage, incidents."""
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.data.models import MarketBarDaily
 from app.domains.data.schemas import (
     BiasGate,
     DataIncidentOut,
@@ -14,9 +18,19 @@ from app.domains.data.schemas import (
     LatencyTrend,
     LineageNodeOut,
     LineageOut,
+    MarketBarDailyOut,
+    MarketDataAkshareImportIn,
+    MarketDataCsvImportIn,
+    MarketDataImportSummary,
+)
+from app.services.market_data_import import (
+    MarketDataImportError,
+    MarketDataImportResult,
+    MarketDataImportService,
 )
 
 router = APIRouter()
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 _HEADER = DataOverview(
@@ -108,7 +122,7 @@ _KPIS = [
 
 
 @router.get("/overview", response_model=DataScreen)
-async def get_data_overview(db: AsyncSession = Depends(get_db)) -> DataScreen:
+async def get_data_overview(db: DbSession) -> DataScreen:
     """Return the complete Data Operations screen data."""
     return DataScreen(
         header=_HEADER,
@@ -123,9 +137,68 @@ async def get_data_overview(db: AsyncSession = Depends(get_db)) -> DataScreen:
 
 
 @router.get("/sources", response_model=list[DataSourceOut])
-async def get_data_sources(db: AsyncSession = Depends(get_db)) -> list[DataSourceOut]:
+async def get_data_sources(db: DbSession) -> list[DataSourceOut]:
     """Return all data sources."""
     return _SOURCES
+
+
+@router.post("/market-bars/import/csv", response_model=MarketDataImportSummary)
+async def import_market_bars_csv(
+    payload: MarketDataCsvImportIn,
+    db: DbSession,
+) -> MarketDataImportSummary:
+    """Import daily market bars from a local CSV file path."""
+    service = MarketDataImportService(db)
+    try:
+        result = await service.import_csv_file(
+            payload.path,
+            default_symbol=payload.default_symbol,
+            source_name=payload.source_name,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MarketDataImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _import_summary(result)
+
+
+@router.post("/market-bars/import/akshare", response_model=MarketDataImportSummary)
+async def import_market_bars_akshare(
+    payload: MarketDataAkshareImportIn,
+    db: DbSession,
+) -> MarketDataImportSummary:
+    """Import daily market bars from AKShare."""
+    service = MarketDataImportService(db)
+    try:
+        result = await service.import_akshare(
+            symbols=payload.symbols,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+            adjust=payload.adjust,
+        )
+    except MarketDataImportError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _import_summary(result)
+
+
+@router.get("/market-bars", response_model=list[MarketBarDailyOut])
+async def list_market_bars(
+    db: DbSession,
+    symbol: str | None = None,
+    start_date: str | None = Query(default=None, alias="startDate"),
+    end_date: str | None = Query(default=None, alias="endDate"),
+    limit: int = Query(default=1000, ge=1, le=5000),
+) -> list[MarketBarDailyOut]:
+    """Return persisted daily market bars for research inspection."""
+    query = select(MarketBarDaily)
+    if symbol:
+        query = query.where(MarketBarDaily.symbol == symbol.upper())
+    if start_date:
+        query = query.where(MarketBarDaily.trade_date >= start_date)
+    if end_date:
+        query = query.where(MarketBarDaily.trade_date <= end_date)
+    result = await db.execute(query.order_by(MarketBarDaily.symbol, MarketBarDaily.trade_date).limit(limit))
+    return [_market_bar_out(row) for row in result.scalars().all()]
 
 
 @router.get("/latency-trend", response_model=LatencyTrend)
@@ -150,3 +223,43 @@ async def get_incidents() -> list[DataIncidentOut]:
 async def get_bias_gates() -> list[BiasGate]:
     """Return bias gate checks."""
     return _BIAS_GATES
+
+
+def _import_summary(result: MarketDataImportResult) -> MarketDataImportSummary:
+    return MarketDataImportSummary(
+        source=result.source,
+        total_rows=result.total_rows,
+        imported_rows=result.imported_rows,
+        inserted_rows=result.inserted_rows,
+        updated_rows=result.updated_rows,
+        skipped_rows=result.skipped_rows,
+        symbols=result.symbols,
+        start_date=result.start_date,
+        end_date=result.end_date,
+        errors=result.errors,
+    )
+
+
+def _market_bar_out(row: MarketBarDaily) -> MarketBarDailyOut:
+    return MarketBarDailyOut(
+        id=row.id,
+        symbol=row.symbol,
+        trade_date=row.trade_date,
+        prev_close=row.prev_close,
+        open=row.open,
+        high=row.high,
+        low=row.low,
+        close=row.close,
+        volume=row.volume,
+        amount=row.amount,
+        adjusted_close=row.adjusted_close,
+        forward_factor=row.forward_factor,
+        limit_up_price=row.limit_up_price,
+        limit_down_price=row.limit_down_price,
+        is_st=row.is_st,
+        is_limit_up=row.is_limit_up,
+        is_limit_down=row.is_limit_down,
+        is_suspended=row.is_suspended,
+        can_buy=row.can_buy,
+        can_sell=row.can_sell,
+    )

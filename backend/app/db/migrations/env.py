@@ -10,20 +10,28 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.db.base import Base
-from app.domains.identity.models import Organization, Role, Session, User, UserRole  # noqa: F401
+from app.domains.agents.models import (  # noqa: F401
+    AgentMessage,
+    AgentRegistry,
+    AgentTask,
+    ToolRegistry,
+)
 from app.domains.audit.models import AuditLog, EventOutbox, IdempotencyKey  # noqa: F401
+from app.domains.backtest.models import (  # noqa: F401
+    BacktestMetric,
+    BacktestRun,
+    BacktestTask,
+    EquityPoint,
+    StressResult,
+)
+from app.domains.data.models import MarketBarDaily  # noqa: F401
+from app.domains.identity.models import Organization, Role, Session, User, UserRole  # noqa: F401
 from app.domains.strategy.models import (  # noqa: F401
     PipelineEvent,
     Strategy,
     StrategyTask,
     StrategyTemplate,
     StrategyVersion,
-)
-from app.domains.agents.models import (  # noqa: F401
-    AgentMessage,
-    AgentRegistry,
-    AgentTask,
-    ToolRegistry,
 )
 
 # this is the Alembic Config object, which provides
@@ -35,8 +43,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override the sqlalchemy.url from settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Override the sqlalchemy.url from settings.
+# Windows absolute SQLite URLs contain %-encoding (e.g. %3A for ':'); ConfigParser
+# treats bare '%' as interpolation — escape as '%%' for the .ini layer only.
+_ini_safe_db_url = settings.database_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", _ini_safe_db_url)
 
 # add your model's MetaData object here for 'autogenerate' support
 target_metadata = Base.metadata
@@ -44,7 +55,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    url = settings.database_url
     context.configure(
         url=url,
         target_metadata=target_metadata,

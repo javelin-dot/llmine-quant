@@ -1,12 +1,21 @@
 """Backtest Service API — backtest tasks, runs, reports, equity curves."""
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.backtest.models import BacktestMetric, BacktestRun, BacktestTask, EquityPoint
 from app.domains.backtest.schemas import (
     BacktestComparisonRow,
+    BacktestCostIn,
+    BacktestCreateIn,
+    BacktestEquityPointOut,
+    BacktestMetricOut,
     BacktestScreen,
+    BacktestTaskResultOut,
     ConfidenceFeature,
     ConfidenceTower,
     CurvePoint,
@@ -16,8 +25,10 @@ from app.domains.backtest.schemas import (
     StressScenario,
     WalkForwardFold,
 )
+from app.services.daily_backtest import BacktestCostConfig, BacktestDataError, DailyBacktestConfig, DailyBacktestEngine
 
 router = APIRouter()
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 _KPIS = [
     Kpi(label="累计收益", value="+37.0%", trend="▲", tone="green"),
@@ -116,7 +127,7 @@ _HEATMAP = ParameterHeatmap(
 
 
 @router.get("/overview", response_model=BacktestScreen)
-async def get_backtest_overview(db: AsyncSession = Depends(get_db)) -> BacktestScreen:
+async def get_backtest_overview(db: DbSession) -> BacktestScreen:
     """Return the complete Backtest Lab screen data."""
     return BacktestScreen(
         kpis=_KPIS,
@@ -129,13 +140,124 @@ async def get_backtest_overview(db: AsyncSession = Depends(get_db)) -> BacktestS
     )
 
 
-@router.post("/")
-async def create_backtest_task() -> dict[str, str]:
-    """Create a backtest task."""
-    return {"task_id": "bt-001", "status": "queued"}
+@router.post("/", response_model=BacktestTaskResultOut)
+async def create_backtest_task(
+    payload: BacktestCreateIn,
+    db: DbSession,
+) -> BacktestTaskResultOut:
+    """Create, execute and persist a research backtest task."""
+    engine = DailyBacktestEngine(db)
+    try:
+        result = await engine.run_and_persist(_daily_backtest_config(payload))
+    except (BacktestDataError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _result_out(result)
 
 
-@router.get("/{task_id}")
-async def get_backtest_task(task_id: str) -> dict[str, str]:
-    """Get backtest task status."""
-    return {"task_id": task_id, "status": "completed"}
+@router.get("/{task_id}", response_model=BacktestTaskResultOut)
+async def get_backtest_task(task_id: str, db: DbSession) -> BacktestTaskResultOut:
+    """Get a persisted backtest task and its latest run result."""
+    task = await db.get(BacktestTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="backtest task not found")
+
+    run = (
+        await db.execute(
+            select(BacktestRun)
+            .where(BacktestRun.task_id == task.id)
+            .order_by(BacktestRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if run is None:
+        return BacktestTaskResultOut(task_id=task.id, status=task.status)
+
+    metric = (
+        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run.id).limit(1))
+    ).scalar_one_or_none()
+    equity_points = (
+        await db.execute(
+            select(EquityPoint)
+            .where(EquityPoint.run_id == run.id)
+            .order_by(EquityPoint.trade_date)
+        )
+    ).scalars().all()
+    return _persisted_result_out(task, run, metric, equity_points)
+
+
+def _daily_backtest_config(payload: BacktestCreateIn) -> DailyBacktestConfig:
+    return DailyBacktestConfig(
+        universe=tuple(payload.universe),
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        strategy_name=payload.strategy_name,
+        initial_cash=payload.initial_cash,
+        strategy_params=payload.strategy_params,
+        cost_config=_cost_config(payload.cost_config),
+    )
+
+
+def _cost_config(payload: BacktestCostIn) -> BacktestCostConfig:
+    return BacktestCostConfig(
+        commission_rate=payload.commission_rate,
+        min_commission=payload.min_commission,
+        stamp_tax_rate=payload.stamp_tax_rate,
+        slippage_bps=payload.slippage_bps,
+    )
+
+
+def _result_out(result) -> BacktestTaskResultOut:
+    return BacktestTaskResultOut(
+        task_id=result.task_id or "",
+        status="completed",
+        run_id=result.run_id,
+        metrics=BacktestMetricOut(
+            cumulative_return=result.metrics.cumulative_return,
+            annual_return=result.metrics.annual_return,
+            max_drawdown=result.metrics.max_drawdown,
+            sharpe_ratio=result.metrics.sharpe_ratio,
+            win_rate=result.metrics.win_rate,
+            turnover=result.metrics.turnover,
+        ),
+        equity_curve=[
+            BacktestEquityPointOut(
+                trade_date=point.trade_date,
+                value=point.value,
+                drawdown=point.drawdown,
+            )
+            for point in result.equity_curve
+        ],
+    )
+
+
+def _persisted_result_out(
+    task: BacktestTask,
+    run: BacktestRun,
+    metric: BacktestMetric | None,
+    equity_points: list[EquityPoint],
+) -> BacktestTaskResultOut:
+    return BacktestTaskResultOut(
+        task_id=task.id,
+        status=task.status,
+        run_id=run.id,
+        metrics=_metric_out(metric) if metric is not None else None,
+        equity_curve=[
+            BacktestEquityPointOut(
+                trade_date=point.trade_date,
+                value=point.value,
+                drawdown=point.drawdown,
+            )
+            for point in equity_points
+        ],
+    )
+
+
+def _metric_out(metric: BacktestMetric) -> BacktestMetricOut:
+    return BacktestMetricOut(
+        cumulative_return=metric.cumulative_return or 0.0,
+        annual_return=metric.annual_return or 0.0,
+        max_drawdown=metric.max_drawdown or 0.0,
+        sharpe_ratio=metric.sharpe_ratio or 0.0,
+        win_rate=metric.win_rate or 0.0,
+        turnover=metric.turnover or 0.0,
+    )

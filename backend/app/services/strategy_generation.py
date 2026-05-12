@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import ast
 import json
-import random
 import uuid
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import LLMException
@@ -20,40 +19,63 @@ from app.domains.strategy.models import (
     StrategyTask,
     StrategyVersion,
 )
+from app.domains.strategy.generation_dsl import (
+    build_strategy_metadata_bundle,
+    parse_strategy_generation_spec,
+    strategy_generation_json_schema,
+)
+from app.domains.strategy.generation_validate import (
+    validate_generated_strategy_ast,
+    validate_spec_semantics,
+)
 from app.integrations.llm import get_llm_provider
 from app.integrations.llm.prompts import (
     STRATEGY_GENERATION_SYSTEM_PROMPT,
     STRATEGY_GENERATION_USER_PROMPT,
-    STRATEGY_METADATA_SYSTEM_PROMPT,
-    STRATEGY_METADATA_USER_PROMPT,
+    STRATEGY_SPEC_FOR_CODE_APPEND,
+    STRATEGY_SPEC_SYSTEM_PROMPT,
+    STRATEGY_SPEC_USER_PROMPT,
 )
 from app.services.agent_orchestrator import AgentOrchestrator
 from app.services.audit_service import AuditService
-
-
-_METADATA_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "family": {"type": "string"},
-        "description": {"type": "string"},
-        "universe": {"type": "string"},
-        "frequency": {"type": "string"},
-        "expected_sharpe": {"type": "number"},
-        "expected_max_dd": {"type": "number"},
-    },
-    "required": [
-        "name",
-        "family",
-        "description",
-        "universe",
-        "frequency",
-        "expected_sharpe",
-        "expected_max_dd",
-    ],
-}
+from app.services.daily_backtest import (
+    BacktestCostConfig,
+    BacktestDataError,
+    DailyBacktestConfig,
+    DailyBacktestEngine,
+    DailyBacktestResult,
+)
+from app.services.strategy_generation_research import (
+    discover_default_research_universe,
+    spec_to_dual_ma_params,
+)
 
 _MAX_DD_CAPS = {"conservative": 0.12, "balanced": 0.20, "aggressive": 0.35}
+
+
+def _backtest_result_to_pipeline_dict(result: DailyBacktestResult) -> dict[str, Any]:
+    """Shape persisted research metrics like the legacy mock dict for risk + strategy rows."""
+    m = result.metrics
+    raw_dd = m.max_drawdown
+    max_dd = abs(raw_dd) if raw_dd < 0 else float(raw_dd)
+    return {
+        "sharpe": round(float(m.sharpe_ratio), 4),
+        "maxDd": round(float(max_dd), 4),
+        "annualReturn": round(float(m.annual_return), 4),
+        "cumulativeReturn": round(float(m.cumulative_return), 4),
+        "winRate": round(float(m.win_rate), 4),
+        "turnover": round(float(m.turnover), 4),
+        "oosScore": round(
+            min(1.0, max(0.0, 0.45 + m.win_rate * 0.35 + min(float(m.sharpe_ratio), 2.5) * 0.08)),
+            2,
+        ),
+        "confidence": round(min(1.0, max(0.1, float(m.sharpe_ratio) / 2.5)), 2),
+        "backtestTaskId": result.task_id,
+        "backtestRunId": result.run_id,
+        "researchStrategy": result.strategy_name,
+        "researchStartDate": result.start_date,
+        "researchEndDate": result.end_date,
+    }
 
 
 class StrategyGenerationService:
@@ -154,23 +176,42 @@ class StrategyGenerationService:
                 correlation_id=correlation_id,
             )
 
-            # 3. static check
-            try:
-                ast.parse(code_text)
-            except SyntaxError as exc:
-                raise LLMException(f"LLM produced invalid python: {exc}") from exc
+            # 3. static + interface check (done inside _generate_code; stage records outcome)
             await self._stage(
                 task=task,
                 stage="static_check",
                 agent_role="strategy",
                 event="code.static_check_passed",
                 progress=50,
-                detail={"checks": ["ast.parse"]},
+                detail={"checks": ["ast.parse", "dsl_semantics", "strategy_interface", "future_data_guard"]},
                 correlation_id=correlation_id,
             )
 
-            # 4. backtest (mock)
-            backtest = self._mock_backtest(task.id, task.market, task.risk_profile)
+            # 4. research backtest (persisted dual_ma proxy from DSL + DB bars)
+            spec_payload = metadata.get("params") or {}
+            try:
+                gen_spec = parse_strategy_generation_spec(spec_payload)
+            except ValidationError as exc:
+                raise LLMException(f"metadata params are not a valid strategy spec: {exc}") from exc
+
+            universe, start_date, end_date = await discover_default_research_universe(self.session)
+            dual_params = spec_to_dual_ma_params(gen_spec)
+            bt_config = DailyBacktestConfig(
+                universe=universe,
+                start_date=start_date,
+                end_date=end_date,
+                strategy_name="dual_ma",
+                strategy_params=dual_params,
+                initial_cash=1_000_000.0,
+                cost_config=BacktestCostConfig(),
+            )
+            engine = DailyBacktestEngine(self.session)
+            try:
+                bt_result = await engine.run_and_persist(bt_config, priority=2)
+            except BacktestDataError as exc:
+                raise LLMException(f"research backtest failed: {exc}") from exc
+
+            backtest = _backtest_result_to_pipeline_dict(bt_result)
             await self._stage(
                 task=task,
                 stage="backtest",
@@ -322,19 +363,57 @@ class StrategyGenerationService:
     async def _generate_code(
         self, task: StrategyTask
     ) -> tuple[str, dict[str, Any]]:
+        """Structured DSL first (validated), then Python strategy class."""
         provider = get_llm_provider()
-        user_prompt = STRATEGY_GENERATION_USER_PROMPT.format(
+        output_schema = strategy_generation_json_schema()
+        spec_prompt = STRATEGY_SPEC_USER_PROMPT.format(
             market=task.market,
             risk_profile=task.risk_profile,
             prompt=task.prompt,
         )
+        try:
+            spec_raw = await provider.generate_structured(
+                prompt=spec_prompt,
+                output_schema=output_schema,
+                system_prompt=STRATEGY_SPEC_SYSTEM_PROMPT,
+                temperature=0.2,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise LLMException(f"strategy DSL generation failed: {exc}") from exc
+
+        try:
+            spec = parse_strategy_generation_spec(spec_raw)
+        except ValidationError as exc:
+            raise LLMException(f"strategy DSL validation failed: {exc}") from exc
+
+        try:
+            validate_spec_semantics(
+                spec,
+                risk_profile=task.risk_profile,
+                market=task.market,
+            )
+        except ValueError as exc:
+            raise LLMException(f"strategy DSL semantic validation failed: {exc}") from exc
+
+        metadata = build_strategy_metadata_bundle(
+            spec,
+            prompt_excerpt=task.prompt,
+            display_seed=task.id,
+        )
+
+        code_user = STRATEGY_GENERATION_USER_PROMPT.format(
+            market=task.market,
+            risk_profile=task.risk_profile,
+            prompt=task.prompt,
+        ) + STRATEGY_SPEC_FOR_CODE_APPEND.format(
+            spec_json=json.dumps(spec.model_dump(), ensure_ascii=False),
+        )
         code_resp = await provider.generate(
-            prompt=user_prompt,
+            prompt=code_user,
             system_prompt=STRATEGY_GENERATION_SYSTEM_PROMPT,
             temperature=0.2,
         )
         code_text = code_resp.text.strip()
-        # Strip markdown fences if present
         if code_text.startswith("```"):
             lines = code_text.splitlines()
             if lines and lines[0].startswith("```"):
@@ -344,40 +423,13 @@ class StrategyGenerationService:
             code_text = "\n".join(lines).strip()
 
         try:
-            meta = await provider.generate_structured(
-                prompt=STRATEGY_METADATA_USER_PROMPT.format(
-                    market=task.market,
-                    risk_profile=task.risk_profile,
-                    prompt=task.prompt,
-                ),
-                output_schema=_METADATA_SCHEMA,
-                system_prompt=STRATEGY_METADATA_SYSTEM_PROMPT,
-                temperature=0.2,
-            )
-        except Exception:  # noqa: BLE001
-            meta = {}
+            validate_generated_strategy_ast(code_text)
+        except ValueError as exc:
+            raise LLMException(f"generated strategy code validation failed: {exc}") from exc
 
-        meta.setdefault("model", code_resp.model)
-        meta.setdefault("provider", code_resp.provider)
-        return code_text, meta
-
-    def _mock_backtest(
-        self, task_id: str, market: str, risk_profile: str
-    ) -> dict[str, Any]:
-        """Deterministic mock backtest keyed on task id."""
-        rng = random.Random(f"{task_id}:{market}:{risk_profile}")
-        sharpe = round(1.2 + rng.random() * 0.9, 2)
-        max_dd = round(0.08 + rng.random() * 0.10, 3)
-        annual = round(0.12 + rng.random() * 0.18, 3)
-        oos = round(0.55 + rng.random() * 0.25, 2)
-        confidence = round(min(1.0, sharpe / 2.5), 2)
-        return {
-            "sharpe": sharpe,
-            "maxDd": max_dd,
-            "annualReturn": annual,
-            "oosScore": oos,
-            "confidence": confidence,
-        }
+        metadata["model"] = code_resp.model
+        metadata["provider"] = code_resp.provider
+        return code_text, metadata
 
     def _check_risk(self, metrics: dict[str, Any], risk_profile: str) -> bool:
         cap = _MAX_DD_CAPS.get(risk_profile, 0.25)

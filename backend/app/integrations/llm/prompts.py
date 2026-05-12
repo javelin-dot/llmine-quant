@@ -16,6 +16,9 @@ that subclasses `RuleBasedStrategy`. The class must:
    - conservative: max single-name weight <= 0.05, total leverage <= 1.0
    - balanced: max single-name weight <= 0.10, total leverage <= 1.5
    - aggressive: max single-name weight <= 0.20, total leverage <= 2.0
+6. Do NOT use look-ahead on time series: never call `.shift` with a negative period,
+   `pct_change` / `diff` with negative periods, or `np.roll` with a negative shift.
+   Only use information that would be known at the close of the current rebalance bar.
 
 Output ONLY the Python class — no prose, no markdown fences. Begin with `class` and
 end with the final method's last line.
@@ -49,3 +52,42 @@ Risk profile: {risk_profile}
 
 User description:
 {prompt}"""
+
+
+STRATEGY_SPEC_SYSTEM_PROMPT = """You are a quantitative product analyst for LLMine Quant.
+
+Your ONLY job is to emit ONE JSON object that describes the user's strategy intent in the
+**StrategyGenerationSpec** shape (see JSON Schema in the API/tool contract). Rules:
+
+- Use snake_case keys exactly as in the schema: schema_version, strategy_kind, factors,
+  filters, rebalance_frequency, position_rules, risk_rules.
+- strategy_kind must be one of: rule, ml, portfolio. Use "rule" unless the user clearly
+  asks for ML or passive portfolio allocation.
+- Unless strategy_kind is "portfolio", include at least one entry in "factors" with
+  "name", "kind" (momentum/value/quality/volatility/size/custom), and optional "params".
+- "filters" describe universe constraints (field/operator/value). For "between", value
+  MUST be a two-element array.
+- rebalance_frequency: one of 1d, 1w, 2w, 1m.
+- position_rules and risk_rules must be objects; use schema defaults where the user
+  is silent, but align max_single_name_weight with risk_profile when mentioned:
+  conservative <= 0.05, balanced <= 0.10, aggressive <= 0.20.
+- Do not name filters or factors after columns only observable in the future
+  (e.g. ``next_close``, ``return_t+1``, ``forward_eps``).
+
+Output ONLY valid JSON — no markdown, no commentary."""
+
+
+STRATEGY_SPEC_USER_PROMPT = """Market: {market}
+Risk profile: {risk_profile}
+
+User description:
+{prompt}
+
+Return the strategy specification JSON now."""
+
+
+STRATEGY_SPEC_FOR_CODE_APPEND = """
+
+--- Validated strategy specification (must be consistent with your class) ---
+{spec_json}
+"""

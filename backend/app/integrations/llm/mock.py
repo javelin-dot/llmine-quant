@@ -54,6 +54,41 @@ _MOCK_STRATEGY_TEMPLATE = '''class GeneratedValueStrategy(RuleBasedStrategy):
 '''
 
 
+_MOCK_STRATEGY_SPEC: dict[str, Any] = {
+    "schema_version": "1.0",
+    "strategy_kind": "rule",
+    "factors": [
+        {
+            "name": "value_score",
+            "kind": "value",
+            "description": "ROE/PE composite",
+            "params": {"pe_cap": 30},
+        },
+        {"name": "mom_20d", "kind": "momentum", "params": {"window": 20}},
+    ],
+    "filters": [{"field": "market_cap", "operator": "gte", "value": 5_000_000_000}],
+    "rebalance_frequency": "1d",
+    "position_rules": {
+        "target_gross_exposure": 1.0,
+        "max_single_name_weight": 0.1,
+        "min_positions": 5,
+        "max_positions": 40,
+    },
+    "risk_rules": {
+        "max_portfolio_drawdown": 0.18,
+        "per_symbol_stop_loss_pct": 0.08,
+        "max_sector_weight": 0.35,
+    },
+}
+
+
+def _is_strategy_generation_spec_schema(schema: dict[str, Any]) -> bool:
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return False
+    return "strategy_kind" in props and "factors" in props
+
+
 _MOCK_METADATA: dict[str, Any] = {
     "name": "AI 价值精选 v1",
     "family": "value",
@@ -94,5 +129,6 @@ class MockLLMProvider(LLMProvider):
         system_prompt: str | None = None,
         temperature: float = 0.2,
     ) -> dict[str, Any]:
-        # Ignore schema — mirror the canned metadata.
+        if _is_strategy_generation_spec_schema(output_schema):
+            return json.loads(json.dumps(_MOCK_STRATEGY_SPEC))
         return json.loads(json.dumps(_MOCK_METADATA))
