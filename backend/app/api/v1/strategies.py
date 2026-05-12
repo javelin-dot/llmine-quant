@@ -161,16 +161,21 @@ async def _resolve_live_strategy(
 async def get_strategy_overview(db: AsyncSession = Depends(get_db)) -> StrategyScreen:
     """Return the complete Strategy Factory screen data (DB-driven)."""
     # Pipeline status counts (exclude soft-deleted rows)
-    counts: dict[str, int] = {s: 0 for s in ["research", "backtest", "paper", "live", "paused"]}
+    counts: dict[str, int] = {s: 0 for s in ["ideas", "research", "backtest", "paper", "live", "paused"]}
     rows = await db.execute(
         select(Strategy.status, func.count(Strategy.id))
         .where(Strategy.deleted_at.is_(None))
         .group_by(Strategy.status)
     )
     for status, cnt in rows.all():
-        if status in counts:
-            counts[status] = cnt
+        if status == "draft":
+            counts["ideas"] += cnt
+        elif status in {"backtest", "backtesting"}:
+            counts["backtest"] += cnt
+        elif status in counts:
+            counts[status] += cnt
     pipeline_status = [
+        PipelineStatus(stage="ideas", count=counts["ideas"], tone="blue"),
         PipelineStatus(stage="research", count=counts["research"], tone="blue"),
         PipelineStatus(stage="backtest", count=counts["backtest"], tone="green"),
         PipelineStatus(stage="paper", count=counts["paper"], tone="yellow"),

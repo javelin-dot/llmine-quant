@@ -72,7 +72,7 @@ export default function LifecycleOverview({ onFilterStage, activeFilter }: Lifec
     <div className="lifecycle-overview">
       <div className="lifecycle-overview-head">
         <div>
-          <h3 className="lifecycle-overview-title">策略生命周期</h3>
+          <h3 className="lifecycle-overview-title">策略阶段筛选</h3>
           <span className="lifecycle-overview-sub">
             共 {total} 个策略 &middot; 点击阶段卡片筛选下方列表
           </span>

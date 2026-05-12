@@ -18,7 +18,7 @@ const LIFECYCLE_STAGES = [
 
 export default function StrategyLifecycle({ strategyId }: StrategyLifecycleProps) {
   const data = useStrategy()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(true)
 
   // Find the strategy's current stage from pipelineBoard
   const currentStage = useMemo(() => {
@@ -56,18 +56,18 @@ export default function StrategyLifecycle({ strategyId }: StrategyLifecycleProps
     ? LIFECYCLE_STAGES.findIndex((s) => s.key === currentStage)
     : -1
 
+  if (!strategyId) return null
+
   return (
     <div className="strategy-lifecycle">
       <button className="lifecycle-toggle" onClick={() => setExpanded((v) => !v)}>
         <span className="lifecycle-toggle-icon">{expanded ? '▼' : '▶'}</span>
         <div className="lifecycle-toggle-text">
-          <strong>策略生命周期</strong>
+          <strong>单策略推进状态</strong>
           <span>
-            {strategyId
-              ? currentStage
-                ? `当前阶段：${LIFECYCLE_STAGES.find((s) => s.key === currentStage)?.label || currentStage}`
-                : '选择一个策略查看生命周期'
-              : '从策略矩阵中选择一个策略查看其生命周期'}
+            {currentStage
+              ? `当前阶段：${LIFECYCLE_STAGES.find((s) => s.key === currentStage)?.label || currentStage}`
+              : '当前策略暂无推进阶段记录'}
           </span>
         </div>
       </button>

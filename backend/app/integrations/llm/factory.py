@@ -29,6 +29,18 @@ def get_llm_provider(provider: str | None = None) -> LLMProvider:
         )
 
     if name == "anthropic":
+        if not settings.anthropic_model:
+            raise LLMException(
+                "ANTHROPIC_MODEL is not configured. Set it in the environment "
+                "or in ~/.claude/settings.json.",
+                details={"provider": name},
+            )
+        if not settings.anthropic_base_url:
+            raise LLMException(
+                "ANTHROPIC_BASE_URL is not configured. Set it in the environment "
+                "or in ~/.claude/settings.json.",
+                details={"provider": name, "model": settings.anthropic_model},
+            )
         return AnthropicLLMProvider(
             api_key=settings.anthropic_api_key,
             auth_token=settings.anthropic_auth_token,

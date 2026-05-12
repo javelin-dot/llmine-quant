@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_auth_token: str | None = None  # Bearer-style auth (Kimi / proxies)
     anthropic_base_url: str | None = None  # override base URL
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str | None = None
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_model: str = "gpt-4o"
@@ -127,6 +127,16 @@ def _auto_detect_credentials(s: Settings) -> None:
         if not s.anthropic_base_url and claude_env.get("ANTHROPIC_BASE_URL"):
             s.anthropic_base_url = claude_env["ANTHROPIC_BASE_URL"]
             filled = True
+        if not s.anthropic_model:
+            model = (
+                claude_env.get("ANTHROPIC_MODEL")
+                or claude_env.get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+                or claude_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+                or claude_env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            )
+            if model:
+                s.anthropic_model = model
+                filled = True
         if filled:
             sources.append("~/.claude/settings.json")
 

@@ -1,7 +1,8 @@
 """Anthropic (Claude) provider — lazy-loads the `anthropic` SDK.
 
-Default model: claude-sonnet-4-6 (per implementation plan).
-Set `ANTHROPIC_API_KEY` and `LLM_PROVIDER=anthropic` to enable.
+Set `ANTHROPIC_MODEL`, `ANTHROPIC_BASE_URL`, and either
+`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` to enable. In local
+development these values can be auto-loaded from `~/.claude/settings.json`.
 
 Also supports Bearer-style auth via `auth_token` (e.g. Kimi proxy at
 `https://api.kimi.com/coding/`) and custom `base_url`. These are
@@ -19,7 +20,7 @@ class AnthropicLLMProvider(LLMProvider):
     """Claude provider using the official `anthropic` Python SDK."""
 
     name = "anthropic"
-    default_model = "claude-sonnet-4-6"
+    default_model = ""
 
     def __init__(
         self,
