@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
-import { api } from './lib/api'
+import { api, authStore } from './lib/api'
+import { strategyWs, executionWs, riskWs } from './lib/ws'
+import Login from './screens/Login'
 import Dashboard from './screens/Dashboard'
 import Strategy from './screens/Strategy'
 import Backtest from './screens/Backtest'
@@ -11,17 +13,19 @@ import Data from './screens/Data'
 import Security from './screens/Security'
 import Collaboration from './screens/Collaboration'
 import Audit from './screens/Audit'
+import Paper from './screens/Paper'
 
-type Screen = 'dashboard' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit'
+type Screen = 'dashboard' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit' | 'paper'
 type ModalType = 'global' | 'kill' | 'create' | 'autopilot' | 'approve' | 'pause'
 
-const VALID_SCREENS: Screen[] = ['dashboard', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit']
+const VALID_SCREENS: Screen[] = ['dashboard', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit', 'paper']
 const VALID_MODALS: ModalType[] = ['global', 'kill', 'create', 'autopilot', 'approve', 'pause']
 
 const navItems: { target: Screen; icon: string; label: string }[] = [
   { target: 'dashboard', icon: '⌘', label: 'AI 指挥中心' },
   { target: 'strategy', icon: '◇', label: '策略工厂' },
   { target: 'backtest', icon: '↯', label: '回测实验室' },
+  { target: 'paper', icon: '◎', label: '模拟盘' },
   { target: 'explain', icon: '析', label: '解释与血缘' },
   { target: 'portfolio', icon: '◌', label: '组合驾驶舱' },
   { target: 'execution', icon: '⇄', label: '交易审批' },
@@ -40,19 +44,56 @@ export default function App() {
   const [modal, setModal] = useState<ModalType | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [backtestContext, setBacktestContext] = useState<{ strategyId?: string; taskId?: string }>({})
+  const [currentUser, setCurrentUser] = useState<{ userId: string; name: string; email: string } | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [globalData, setGlobalData] = useState<{
     meta: { product: string; subtitle: string }
     system: { healthScore: number; healthStatusLabel: string; healthBarHeights: number[]; autopilot: boolean; riskGateLabel: string }
     modals: Record<string, { title: string; body: string; primary: string }>
   } | null>(null)
 
+  // Restore session from localStorage on mount
   useEffect(() => {
+    if (authStore.isAuthenticated()) {
+      api.auth.me().then(u => {
+        if (u) setCurrentUser({ userId: u.user_id, name: u.name, email: u.email })
+        else authStore.clearToken()
+        setAuthChecked(true)
+      }).catch(() => { authStore.clearToken(); setAuthChecked(true) })
+    } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAuthChecked(true)
+    }
+  }, [])
+
+  // Listen for 401 events from api.ts
+  useEffect(() => {
+    const handler = () => { setCurrentUser(null); authStore.clearToken() }
+    window.addEventListener('llmine:unauthorized', handler)
+    return () => window.removeEventListener('llmine:unauthorized', handler)
+  }, [])
+
+  useEffect(() => {
+    if (!currentUser) return
     api.dashboard.overview()
       .then((d) => {
         setGlobalData({ meta: d.meta, system: d.system, modals: d.modals })
       })
       .catch((e) => console.error('Global API error:', e))
-  }, [])
+  }, [currentUser])
+
+  // WebSocket connections — start when authenticated, stop on logout
+  useEffect(() => {
+    if (!currentUser) return
+    strategyWs.connect()
+    executionWs.connect()
+    riskWs.connect()
+    return () => {
+      strategyWs.disconnect()
+      executionWs.disconnect()
+      riskWs.disconnect()
+    }
+  }, [currentUser])
 
   const toggleSidebar = useCallback(() => setSidebarCollapsed((v) => !v), [])
 
@@ -124,9 +165,17 @@ export default function App() {
         return <Collaboration onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'audit':
         return <Audit onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'paper':
+        return <Paper onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       default:
         return null
     }
+  }
+
+  if (!authChecked) return null
+
+  if (!currentUser) {
+    return <Login onSuccess={u => setCurrentUser(u)} />
   }
 
   return (
@@ -203,6 +252,13 @@ export default function App() {
             <span className="pill">{globalData?.system.riskGateLabel ?? '—'}</span>
             <button className="btn secondary" onClick={() => openModal('global')}>全局概览</button>
             <button className="btn danger" onClick={() => openModal('kill')}>Kill Switch</button>
+            <span className="pill" title={currentUser.email}>{currentUser.name}</span>
+            <button className="btn secondary" onClick={async () => {
+              const token = authStore.getToken()
+              if (token) await api.auth.logout(token).catch(() => {})
+              authStore.clearToken()
+              setCurrentUser(null)
+            }}>退出</button>
           </div>
         </header>
 

@@ -1,9 +1,13 @@
 """Execution Service API — approvals, order book, pre-trade checks, execution metrics."""
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.execution.models import AgentTrace, Approval, Order
 from app.domains.execution.schemas import (
     AgentTraceOut,
     ApprovalOut,
@@ -17,44 +21,24 @@ from app.domains.execution.schemas import (
     SlippageBucket,
     SlippageMetric,
 )
+from app.core.websocket import manager as ws_manager
+from app.services.audit_service import AuditService
 
 router = APIRouter()
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-_SUMMARY = ExecutionSummary(
-    pending=7,
-    urgent=3,
-    blocked=1,
-    approved24h=12,
-    avgLatencySec=2.4,
-    successRate=0.96,
-)
+_TYPE_TONE = {
+    "live": "red", "paper": "green", "reduce": "yellow", "add": "blue",
+    "rotate": "purple", "hedge": "purple", "pause": "gray",
+}
+_URGENCY_TONE = {"high": "red", "medium": "yellow", "low": "green"}
+_STATUS_TONE = {
+    "filled": "green", "partial": "yellow", "working": "blue",
+    "rejected": "red", "canceled": "gray",
+}
 
-_APPROVALS = [
-    ApprovalOut(
-        id="ap1", type="live", typeTone="red", symbol="600519", name="贵州茅台",
-        side="BUY", qty="100", notional="¥16.8万", notionalPct=0.0168,
-        limitPrice="1680.00", stopLoss="1580.00", confidence=0.92, riskGrade="A",
-        reason="MA趋势策略发出买入信号，突破20日均线",
-        impact="组合权重将从 7.2% 升至 8.5%，仍在风险预算内",
-        expireSec=180, urgency="high", urgencyTone="red", strategy="MA趋势",
-    ),
-    ApprovalOut(
-        id="ap2", type="reduce", typeTone="yellow", symbol="300750", name="宁德时代",
-        side="SELL", qty="200", notional="¥9.2万", notionalPct=0.0092,
-        limitPrice="460.00", stopLoss="—", confidence=0.88, riskGrade="B",
-        reason="行业轮动策略建议减仓，新能源板块动量减弱",
-        impact="降低组合波动 0.3%，释放现金",
-        expireSec=300, urgency="medium", urgencyTone="yellow", strategy="行业轮动",
-    ),
-    ApprovalOut(
-        id="ap3", type="paper", typeTone="green", symbol="002594", name="比亚迪",
-        side="BUY", qty="150", notional="¥5.1万", notionalPct=0.0051,
-        limitPrice="340.00", stopLoss="310.00", confidence=0.85, riskGrade="B",
-        reason="价值选股策略模拟盘测试，PE处于历史低位",
-        impact="模拟盘权重 +0.5%，不影响实盘",
-        expireSec=600, urgency="low", urgencyTone="green", strategy="价值选股",
-    ),
-]
+# ── Static / computed data (metrics, pre-trade checks, agent traces) ──────────
+# These don't have live DB sources yet; kept as well-structured constants.
 
 _PRE_TRADE_CHECKS = [
     PreTradeCheckOut(name="单票集中上限", current=0.085, limit=0.100, status="pass", statusTone="green", note="个股权重 8.5%，低于 10% 上限"),
@@ -62,25 +46,6 @@ _PRE_TRADE_CHECKS = [
     PreTradeCheckOut(name="单日亏损限额", current=0.032, limit=0.050, status="pass", statusTone="green", note="当日已实现+浮亏 3.2%，低于 5% 限额"),
     PreTradeCheckOut(name="净敞口限额", current=0.650, limit=0.800, status="pass", statusTone="green", note="净多头 65%，低于 80% 上限"),
     PreTradeCheckOut(name="VaR 限额", current=1.28, limit=2.00, status="pass", statusTone="green", note="日 VaR 1.28%，低于 2% 限额"),
-]
-
-_ORDER_BOOK = [
-    OrderBookRow(
-        time="09:31:15", symbol="600519", side="BUY", qty="100", limit="1680.00",
-        filled="100", status="filled", statusTone="green", slippageBps=2.1, pnl=None,
-    ),
-    OrderBookRow(
-        time="09:30:42", symbol="300750", side="SELL", qty="200", limit="462.00",
-        filled="150", status="partial", statusTone="yellow", slippageBps=4.5, pnl=1250.0,
-    ),
-    OrderBookRow(
-        time="09:28:10", symbol="002594", side="BUY", qty="150", limit="338.50",
-        filled="0", status="working", statusTone="blue", slippageBps=0.0, pnl=None,
-    ),
-    OrderBookRow(
-        time="09:25:33", symbol="000858", side="BUY", qty="300", limit="145.00",
-        filled="0", status="rejected", statusTone="red", slippageBps=0.0, pnl=None,
-    ),
 ]
 
 _METRICS = ExecutionMetrics(
@@ -104,35 +69,212 @@ _METRICS = ExecutionMetrics(
     ],
 )
 
-_AGENT_TRACE = [
-    AgentTraceOut(time="09:31:20", agent="Execution", action="订单成交", detail="贵州茅台 100股 @ 1680.20，滑点 2.1bps", tone="green", icon="check"),
-    AgentTraceOut(time="09:30:45", agent="Execution", action="部分成交", detail="宁德时代 150/200股 @ 462.30，剩余 50股", tone="yellow", icon="clock"),
-    AgentTraceOut(time="09:28:15", agent="Risk", action="预交易检查通过", detail="比亚迪买入通过所有风控检查", tone="green", icon="shield"),
-    AgentTraceOut(time="09:25:35", agent="Risk", action="订单拒绝", detail="五粮液买入被风控拦截：价格超出涨跌幅限制", tone="red", icon="x"),
-    AgentTraceOut(time="09:20:10", agent="Portfolio", action="再平衡建议", detail="建议减仓宁德时代 2%，增配贵州茅台 1.5%", tone="blue", icon="refresh"),
-]
+
+def _fmt_time(dt) -> str:
+    if dt is None:
+        return "—"
+    s = dt.isoformat()
+    return s[11:19] if len(s) > 11 else s
 
 
-@router.get("/overview", response_model=ExecutionScreen)
-async def get_execution_overview(db: AsyncSession = Depends(get_db)) -> ExecutionScreen:
-    """Return the complete Execution Center screen data."""
-    return ExecutionScreen(
-        summary=_SUMMARY,
-        approvals=_APPROVALS,
-        preTradeChecks=_PRE_TRADE_CHECKS,
-        orderBook=_ORDER_BOOK,
-        metrics=_METRICS,
-        agentTrace=_AGENT_TRACE,
+def _approval_to_out(a: Approval) -> ApprovalOut:
+    return ApprovalOut(
+        id=a.id,
+        type=a.type,
+        typeTone=_TYPE_TONE.get(a.type, "blue"),
+        symbol=a.symbol,
+        name=a.name,
+        side=a.side,
+        qty=a.qty,
+        notional=a.notional,
+        notionalPct=a.notional_pct,
+        limitPrice=a.limit_price or "—",
+        stopLoss=a.stop_loss or "—",
+        confidence=a.confidence,
+        riskGrade=a.risk_grade or "—",
+        reason=a.reason or "",
+        impact=a.impact or "",
+        expireSec=a.expire_sec,
+        urgency=a.urgency,
+        urgencyTone=_URGENCY_TONE.get(a.urgency, "yellow"),
+        strategy=a.strategy_id or "—",
     )
 
 
+async def _get_approvals(db: AsyncSession, status: str = "pending") -> list[ApprovalOut]:
+    rows = (
+        await db.execute(
+            select(Approval)
+            .where(Approval.status == status)
+            .order_by(Approval.created_at.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return [_approval_to_out(a) for a in rows]
+
+
+async def _get_order_book(db: AsyncSession) -> list[OrderBookRow]:
+    rows = (
+        await db.execute(
+            select(Order).order_by(Order.created_at.desc()).limit(20)
+        )
+    ).scalars().all()
+    return [
+        OrderBookRow(
+            time=_fmt_time(r.created_at),
+            symbol=r.symbol,
+            side=r.side,
+            qty=r.qty,
+            limit=r.limit_price,
+            filled=r.filled_qty,
+            status=r.status,
+            statusTone=_STATUS_TONE.get(r.status, "blue"),
+            slippageBps=r.slippage_bps,
+            pnl=r.pnl,
+        )
+        for r in rows
+    ]
+
+
+async def _get_agent_traces(db: AsyncSession) -> list[AgentTraceOut]:
+    rows = (
+        await db.execute(
+            select(AgentTrace).order_by(AgentTrace.created_at.desc()).limit(20)
+        )
+    ).scalars().all()
+    return [
+        AgentTraceOut(
+            time=_fmt_time(r.created_at),
+            agent=r.agent,
+            action=r.action,
+            detail=r.detail or "",
+            tone=r.tone,
+            icon=r.icon or "info",
+        )
+        for r in rows
+    ]
+
+
+async def _get_summary(db: AsyncSession) -> ExecutionSummary:
+    pending = (
+        await db.execute(select(func.count(Approval.id)).where(Approval.status == "pending"))
+    ).scalar() or 0
+    urgent = (
+        await db.execute(
+            select(func.count(Approval.id))
+            .where(Approval.status == "pending", Approval.urgency == "high")
+        )
+    ).scalar() or 0
+    blocked = (
+        await db.execute(
+            select(func.count(Approval.id)).where(Approval.status == "expired")
+        )
+    ).scalar() or 0
+    approved24h = (
+        await db.execute(
+            select(func.count(Approval.id)).where(Approval.status == "approved")
+        )
+    ).scalar() or 0
+    return ExecutionSummary(
+        pending=int(pending),
+        urgent=int(urgent),
+        blocked=int(blocked),
+        approved24h=int(approved24h),
+        avgLatencySec=2.4,
+        successRate=0.96,
+    )
+
+
+@router.get("/overview", response_model=ExecutionScreen)
+async def get_execution_overview(db: DbSession) -> ExecutionScreen:
+    """Return the Execution Center screen — approvals and orders from DB."""
+    approvals = await _get_approvals(db)
+    order_book = await _get_order_book(db)
+    agent_traces = await _get_agent_traces(db)
+    summary = await _get_summary(db)
+    return ExecutionScreen(
+        summary=summary,
+        approvals=approvals,
+        preTradeChecks=_PRE_TRADE_CHECKS,
+        orderBook=order_book,
+        metrics=_METRICS,
+        agentTrace=agent_traces,
+    )
+
+
+@router.get("/approvals", response_model=list[ApprovalOut])
+async def list_approvals(
+    db: DbSession,
+    status: str = Query(default="pending"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[ApprovalOut]:
+    """List trade approval requests filtered by status."""
+    rows = (
+        await db.execute(
+            select(Approval)
+            .where(Approval.status == status)
+            .order_by(Approval.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [_approval_to_out(a) for a in rows]
+
+
 @router.post("/approvals/{approval_id}/approve")
-async def approve_trade(approval_id: str) -> dict[str, str]:
-    """Approve a pending trade."""
+async def approve_trade(approval_id: str, db: DbSession) -> dict[str, str]:
+    """Approve a pending trade and write audit log."""
+    row = (await db.execute(select(Approval).where(Approval.id == approval_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail=f"approval is already {row.status}")
+
+    row.status = "approved"
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="approve_trade",
+        resource_type="approval",
+        resource_id=approval_id,
+        actor_type="human",
+        result="approved",
+        result_tone="green",
+        detail=f"{row.side} {row.qty} {row.symbol} @ {row.limit_price}",
+    )
+    await ws_manager.broadcast(
+        {"type": "approval_update", "approval_id": approval_id, "status": "approved",
+         "symbol": row.symbol, "side": row.side, "qty": row.qty},
+        topic="execution-events",
+    )
     return {"approval_id": approval_id, "status": "approved"}
 
 
 @router.post("/approvals/{approval_id}/reject")
-async def reject_trade(approval_id: str) -> dict[str, str]:
-    """Reject a pending trade."""
+async def reject_trade(approval_id: str, db: DbSession) -> dict[str, str]:
+    """Reject a pending trade and write audit log."""
+    row = (await db.execute(select(Approval).where(Approval.id == approval_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="approval not found")
+    if row.status != "pending":
+        raise HTTPException(status_code=409, detail=f"approval is already {row.status}")
+
+    row.status = "rejected"
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="reject_trade",
+        resource_type="approval",
+        resource_id=approval_id,
+        actor_type="human",
+        result="rejected",
+        result_tone="red",
+        detail=f"{row.side} {row.qty} {row.symbol} @ {row.limit_price}",
+    )
+    await ws_manager.broadcast(
+        {"type": "approval_update", "approval_id": approval_id, "status": "rejected",
+         "symbol": row.symbol, "side": row.side},
+        topic="execution-events",
+    )
     return {"approval_id": approval_id, "status": "rejected"}

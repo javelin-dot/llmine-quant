@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     agents,
     audit,
+    auth,
     backtests,
     collaboration,
     dashboard,
@@ -20,6 +21,7 @@ from app.api.v1 import (
 
 api_router = APIRouter()
 
+api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 api_router.include_router(data.router, prefix="/data", tags=["Data Operations"])
 api_router.include_router(strategies.router, prefix="/strategies", tags=["Strategy Factory"])

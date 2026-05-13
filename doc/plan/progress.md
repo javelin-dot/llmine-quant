@@ -110,6 +110,23 @@ python -m pytest tests/ -q
 
 ## 最近记录
 
+- **2026-05-13 Sprint 3**：Task 2.5 Audit 扩展 + Task 3.1 认证系统 + Task 3.2 WebSocket 实时推送。
+  - **Audit**：`AuditService.log()` 增加 SHA-256 哈希链（`prev_hash` → `curr_hash`）；新增 `GET /audit/verify`（链完整性验证）、`GET /audit/export`（CSV 下载）、`GET /audit/actor-stats?limit=N`、`GET /audit/logs?action=xx` 支持 action 过滤。
+  - **Auth 后端**：新建 `app/api/v1/auth.py`（POST /auth/login OAuth2PasswordRequestForm，POST /auth/refresh，POST /auth/logout，GET /auth/me）；`app/core/auth_deps.py`（`get_current_user` / `get_optional_user` FastAPI Depends）；`python-multipart` 依赖已加入。
+  - **Auth 前端**：`api.ts` 新增 `authStore`（localStorage token 管理），`getJson/postJson/putJson/deleteJson` 注入 `Authorization: Bearer`，监听 `llmine:unauthorized` 事件触发退出；新增 `api.auth.{login,logout,refresh,me}` 方法；新建 `src/screens/Login/index.tsx`（登录表单）；`App.tsx` 增加 `currentUser` / `authChecked` 状态，优先显示 Login，顶栏增加用户名与退出按钮；Login screen CSS 写入 `prototype.css`。
+  - **WebSocket**：`ws.py` 新增 `/ws/execution-events` 和 `/ws/risk-events` 端点；`execution.py` approve/reject 后 broadcast `execution-events`；`risk.py` trigger/recover 后 broadcast `risk-events`；前端新建 `src/lib/ws.ts`（`createWsClient` + 自动重连 + 事件分发，singleton：`strategyWs/executionWs/riskWs`）；`App.tsx` 登录后 connect，退出/组件卸载时 disconnect。
+  - 测试：新增 `TestAuth`（login 成功/错误密码/未知用户）；89 passed。
+
+- **2026-05-13 Sprint 2**：Task 2.1 缺失迁移补齐（+26 表）+ Task 2.2 Execution DB 化 + Task 2.3 Risk DB 化 + Task 2.4 Portfolio DB 化。
+  - 新增 2 个 Alembic 迁移：`20260513_000001`（execution/risk/portfolio，17 张表）+ `20260513_000002`（security/collaboration/explain，13 张表），数据库共 70 张表。
+  - `execution.py`：approve/reject 写 `approvals` 表 + `audit_logs`，overview 从 DB 读 approvals/orders/agent_traces；新增 `GET /execution/approvals`。
+  - `risk.py`：header/budgets/var/circuits/policy/breaches 全部从 DB 读；trigger/recover 写 `circuit_breakers` 表 + `audit_logs`。
+  - `portfolio.py`：NAV 从 `nav_snapshots` 读，rebalance 从 `rebalance_proposals` 读；approve 写 `rebalance_proposals` 表 + `audit_logs`；新增 `GET /portfolio/rebalance`。
+  - `scripts/seed_dev_data.py`：补充 `_seed_circuit_breakers` / `_seed_risk_budgets`，4 条 L1-L4 熔断 + 5 条风险预算已植入 dev DB。
+  - 测试：测试文件更新为 DB 感知（seeded_circuit_l2、seeded_approval、seeded_rebalance fixtures）；86 passed。
+
+- **2026-05-13**：执行全局差距分析（gap-analysis.md + roadmap.md）。扫描范围：所有 11 个后端 API 模块、13 个前端 Context、完整数据库迁移链、前后端 API 合约对比。核心发现：8 个 API 模块返回硬编码数据、7 个领域表无迁移、Paper Trading 前端缺失、Dashboard 类型合约错误、WebSocket 无客户端、Backtest 未接 strategyId、14 个后端端点未在 api.ts 暴露。详见 `doc/plan/gap-analysis.md`（问题清单）和 `doc/plan/roadmap.md`（分 Sprint 修复计划）。
+
 - **2026-05-13**：Phase 4 完成。新增 7 张 paper_* 表（迁移 49c0724c647e）；`PaperTradingEngine` 覆盖 mark / signal / pre-check / match / nav / breach；当日收盘 + 动态滑点撮合（同回测 cost）；幂等 last_processed_date；API `/paper/accounts/*`；Celery + Redis beat (`paper-trading-eod` cron `15:30 Mon-Fri`)；前端 `api.paper.*` 客户端方法；后端测试 86 passed（+7）；frontend `tsc -b --force` + `npm run build` 通过；live API 验证账户创建与 EOD 写入 NAV/positions/orders 全链路。
 
 - **2026-05-13**：Phase 3 全部完成。

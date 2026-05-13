@@ -1,9 +1,15 @@
 """Risk Service API — risk overview, budgets, VaR, circuit breakers, breaches."""
 
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.execution.models import Approval
+from app.domains.risk.models import CircuitBreaker as CircuitBreakerModel
+from app.domains.risk.models import PolicyDecision, RiskBreach, RiskBudget, VaRSnapshot
 from app.domains.risk.schemas import (
     CircuitBreaker,
     PolicyDecisionOut,
@@ -16,133 +22,251 @@ from app.domains.risk.schemas import (
     VaRHistory,
     VaRPanel,
 )
+from app.core.websocket import manager as ws_manager
+from app.services.audit_service import AuditService
 
 router = APIRouter()
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-_HEADER = RiskHeader(
-    healthScore=92,
-    healthStatus="HEALTHY",
-    healthStatusTone="green",
-    killSwitchArmed=True,
-    lastIncident="2h ago",
-    autoBlocks24h=3,
-    pendingApprovals=2,
-    activeBreaches=1,
-)
+
+def _fmt_time(dt) -> str:
+    if dt is None:
+        return "—"
+    s = dt.isoformat()
+    return s[11:16] if len(s) > 11 else s
+
+
+async def _get_header(db: AsyncSession) -> RiskHeader:
+    active_breaches = (
+        await db.execute(
+            select(func.count(RiskBreach.id)).where(RiskBreach.status == "ongoing")
+        )
+    ).scalar() or 0
+    pending_approvals = (
+        await db.execute(
+            select(func.count(Approval.id)).where(Approval.status == "pending")
+        )
+    ).scalar() or 0
+    auto_blocks = (
+        await db.execute(
+            select(func.count(PolicyDecision.id)).where(PolicyDecision.decision == "denied")
+        )
+    ).scalar() or 0
+    score = max(0, 100 - int(active_breaches) * 10 - int(auto_blocks) * 2)
+    if score >= 90:
+        status, tone = "HEALTHY", "green"
+    elif score >= 70:
+        status, tone = "WARNING", "yellow"
+    else:
+        status, tone = "CRITICAL", "red"
+    return RiskHeader(
+        healthScore=score,
+        healthStatus=status,
+        healthStatusTone=tone,
+        killSwitchArmed=True,
+        lastIncident="—",
+        autoBlocks24h=int(auto_blocks),
+        pendingApprovals=int(pending_approvals),
+        activeBreaches=int(active_breaches),
+    )
+
+
+async def _get_budgets(db: AsyncSession) -> list[RiskBudgetRow]:
+    rows = (
+        await db.execute(select(RiskBudget).order_by(RiskBudget.created_at.asc()).limit(20))
+    ).scalars().all()
+    return [
+        RiskBudgetRow(
+            name=r.metric,
+            used=r.used_value,
+            limit=r.limit_value,
+            unit=r.unit,
+            tone=r.tone,
+            desc=r.description or "",
+        )
+        for r in rows
+    ]
+
+
+async def _get_var(db: AsyncSession) -> VaRPanel:
+    snaps = (
+        await db.execute(
+            select(VaRSnapshot).order_by(VaRSnapshot.created_at.desc()).limit(30)
+        )
+    ).scalars().all()
+    if not snaps:
+        return VaRPanel(
+            daily=0.0, dailyPct=0.0, weekly=0.0, weeklyPct=0.0,
+            confidence=0.95, currency="CNY", history=[], decomposition=[],
+        )
+    latest = snaps[0]
+    history = [
+        VaRHistory(date=s.ts[:10], value=s.daily_var)
+        for s in reversed(snaps[:30])
+    ]
+    return VaRPanel(
+        daily=latest.daily_var,
+        dailyPct=round(latest.daily_var / 10_000_000 * 100, 2),
+        weekly=latest.weekly_var,
+        weeklyPct=round(latest.weekly_var / 10_000_000 * 100, 2),
+        confidence=latest.confidence,
+        currency="CNY",
+        history=history,
+        decomposition=[],
+    )
+
+
+async def _get_circuits(db: AsyncSession) -> list[CircuitBreaker]:
+    rows = (
+        await db.execute(select(CircuitBreakerModel).order_by(CircuitBreakerModel.level))
+    ).scalars().all()
+    return [
+        CircuitBreaker(
+            level=r.level,
+            name=r.name,
+            status=r.status,
+            statusTone=r.status_tone,
+            trigger=r.trigger,
+            action=r.action,
+            triggers24h=r.triggers24h,
+            lastTrigger=r.last_trigger or "—",
+        )
+        for r in rows
+    ]
+
+
+async def _get_policy_stream(db: AsyncSession) -> list[PolicyDecisionOut]:
+    rows = (
+        await db.execute(
+            select(PolicyDecision).order_by(PolicyDecision.created_at.desc()).limit(20)
+        )
+    ).scalars().all()
+    return [
+        PolicyDecisionOut(
+            time=_fmt_time(r.created_at),
+            agent=r.actor,
+            request=r.request,
+            decision=r.decision,
+            decisionTone=r.decision_tone,
+            reason=r.reason or "",
+            durationMs=r.duration_ms,
+        )
+        for r in rows
+    ]
+
+
+async def _get_breaches(db: AsyncSession) -> list[RiskBreachOut]:
+    rows = (
+        await db.execute(
+            select(RiskBreach).order_by(RiskBreach.created_at.desc()).limit(20)
+        )
+    ).scalars().all()
+    return [
+        RiskBreachOut(
+            time=_fmt_time(r.created_at),
+            severity=r.severity,
+            severityTone=r.severity_tone,
+            title=r.title,
+            detail=r.detail or "",
+            resolution=r.resolution or "",
+            status=r.status,
+            statusTone=r.status_tone,
+        )
+        for r in rows
+    ]
+
 
 _KPIS = [
-    RiskKpi(label="日VaR", value="¥128.5K", trend="▼", tone="green"),
-    RiskKpi(label="周VaR", value="¥342.1K", trend="▼", tone="green"),
-    RiskKpi(label="最大回撤", value="-12.3%", trend="▼", tone="yellow"),
-    RiskKpi(label="组合Beta", value="0.85", trend="▲", tone="yellow"),
-    RiskKpi(label="杠杆", value="1.12x", trend="→", tone="green"),
-]
-
-_BUDGETS = [
-    RiskBudgetRow(name="单日亏损限额", used=0.032, limit=0.050, unit="绝对", tone="green", desc="当日已实现+浮亏"),
-    RiskBudgetRow(name="最大回撤限额", used=0.123, limit=0.200, unit="绝对", tone="yellow", desc="峰值到谷值回撤"),
-    RiskBudgetRow(name="单票集中上限", used=0.085, limit=0.100, unit="权重", tone="green", desc="个股权重"),
-    RiskBudgetRow(name="行业集中上限", used=0.220, limit=0.300, unit="权重", tone="green", desc="单一行业权重"),
-    RiskBudgetRow(name="净敞口限额", used=0.650, limit=0.800, unit="比例", tone="green", desc="净多头/空头比例"),
-]
-
-_VAR = VaRPanel(
-    daily=128500.0,
-    dailyPct=1.28,
-    weekly=342100.0,
-    weeklyPct=3.42,
-    confidence=0.95,
-    currency="CNY",
-    history=[
-        VaRHistory(date="2026-05-01", value=115000.0),
-        VaRHistory(date="2026-05-02", value=118000.0),
-        VaRHistory(date="2026-05-03", value=112000.0),
-        VaRHistory(date="2026-05-04", value=125000.0),
-        VaRHistory(date="2026-05-05", value=130000.0),
-        VaRHistory(date="2026-05-06", value=128000.0),
-        VaRHistory(date="2026-05-07", value=122000.0),
-        VaRHistory(date="2026-05-08", value=128500.0),
-    ],
-    decomposition=[
-        VaRDecomposition(strategy="MA趋势", contribution=45200.0, pct=35.2, tone="yellow"),
-        VaRDecomposition(strategy="价值选股", contribution=32100.0, pct=25.0, tone="green"),
-        VaRDecomposition(strategy="行业轮动", contribution=51300.0, pct=39.8, tone="yellow"),
-    ],
-)
-
-_CIRCUITS = [
-    CircuitBreaker(
-        level="L1", name="可恢复熔断", status="armed", statusTone="green",
-        trigger="行情延迟 > 5min / 策略心跳异常", action="暂停新开仓，允许平仓",
-        triggers24h=0, lastTrigger="—",
-    ),
-    CircuitBreaker(
-        level="L2", name="组合熔断", status="armed", statusTone="green",
-        trigger="组合回撤 > 15%", action="减仓至 50% 仓位",
-        triggers24h=0, lastTrigger="—",
-    ),
-    CircuitBreaker(
-        level="L3", name="不可恢复熔断", status="armed", statusTone="green",
-        trigger="资金异常 / 重复下单 / 风控服务宕机", action="全部暂停，冻结账户",
-        triggers24h=0, lastTrigger="—",
-    ),
-    CircuitBreaker(
-        level="L4", name="全市场熔断", status="armed", statusTone="green",
-        trigger="大盘单日跌幅 > 7%", action="清仓或暂停",
-        triggers24h=0, lastTrigger="—",
-    ),
-]
-
-_POLICY_STREAM = [
-    PolicyDecisionOut(
-        time="09:31:15", agent="Risk", request="MA趋势 买入 贵州茅台 100股",
-        decision="approval_required", decisionTone="yellow",
-        reason="名义金额超过单票限额 80%", durationMs=45,
-    ),
-    PolicyDecisionOut(
-        time="09:30:42", agent="Risk", request="价值选股 卖出 宁德时代 200股",
-        decision="allowed", decisionTone="green",
-        reason="通过所有风控检查", durationMs=12,
-    ),
-    PolicyDecisionOut(
-        time="09:28:10", agent="Risk", request="行业轮动 买入 比亚迪 150股",
-        decision="modified", decisionTone="blue",
-        reason="数量调整为 120 股以符合集中度限制", durationMs=28,
-    ),
-]
-
-_BREACHES = [
-    RiskBreachOut(
-        time="09:15", severity="medium", severityTone="yellow",
-        title="MA趋势策略回撤接近阈值",
-        detail="当前回撤 12.3%，接近 L2 熔断阈值 15%",
-        resolution="监控中，若继续扩大将自动触发减仓",
-        status="ongoing", statusTone="yellow",
-    ),
+    RiskKpi(label="日VaR", value="—", trend="—", tone="blue"),
+    RiskKpi(label="周VaR", value="—", trend="—", tone="blue"),
+    RiskKpi(label="最大回撤", value="—", trend="—", tone="blue"),
+    RiskKpi(label="组合Beta", value="—", trend="—", tone="blue"),
+    RiskKpi(label="杠杆", value="—", trend="—", tone="blue"),
 ]
 
 
 @router.get("/overview", response_model=RiskScreen)
-async def get_risk_overview(db: AsyncSession = Depends(get_db)) -> RiskScreen:
-    """Return the complete Risk Control screen data."""
+async def get_risk_overview(db: DbSession) -> RiskScreen:
+    """Return the complete Risk Control screen — DB-driven."""
+    header, budgets, var, circuits, policy, breaches = (
+        await _get_header(db),
+        await _get_budgets(db),
+        await _get_var(db),
+        await _get_circuits(db),
+        await _get_policy_stream(db),
+        await _get_breaches(db),
+    )
     return RiskScreen(
-        header=_HEADER,
+        header=header,
         kpis=_KPIS,
-        budgets=_BUDGETS,
-        var=_VAR,
-        circuits=_CIRCUITS,
-        policyStream=_POLICY_STREAM,
-        breaches=_BREACHES,
+        budgets=budgets,
+        var=var,
+        circuits=circuits,
+        policyStream=policy,
+        breaches=breaches,
     )
 
 
 @router.post("/circuit-breakers/{level}/trigger")
-async def trigger_circuit(level: str) -> dict[str, str]:
-    """Manually trigger a circuit breaker."""
+async def trigger_circuit(level: str, db: DbSession) -> dict[str, str]:
+    """Manually trigger a circuit breaker by level (L1-L4)."""
+    row = (
+        await db.execute(
+            select(CircuitBreakerModel).where(CircuitBreakerModel.level == level).limit(1)
+        )
+    ).scalars().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"circuit breaker {level} not found")
+    row.status = "triggered"
+    row.status_tone = "red"
+    row.triggers24h = (row.triggers24h or 0) + 1
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="trigger_circuit_breaker",
+        resource_type="circuit_breaker",
+        resource_id=row.id,
+        actor_type="human",
+        result="triggered",
+        result_tone="red",
+        detail=f"Circuit breaker {level} manually triggered",
+    )
+    await ws_manager.broadcast(
+        {"type": "circuit_breaker", "level": level, "status": "triggered", "name": row.name},
+        topic="risk-events",
+    )
     return {"level": level, "status": "triggered"}
 
 
 @router.post("/circuit-breakers/{level}/recover")
-async def recover_circuit(level: str) -> dict[str, str]:
+async def recover_circuit(level: str, db: DbSession) -> dict[str, str]:
     """Request circuit breaker recovery."""
+    row = (
+        await db.execute(
+            select(CircuitBreakerModel).where(CircuitBreakerModel.level == level).limit(1)
+        )
+    ).scalars().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"circuit breaker {level} not found")
+    if row.status == "armed":
+        raise HTTPException(status_code=409, detail="circuit breaker is already armed")
+    row.status = "cooldown"
+    row.status_tone = "yellow"
+    await db.flush()
+
+    audit = AuditService(db)
+    await audit.log(
+        action="recover_circuit_breaker",
+        resource_type="circuit_breaker",
+        resource_id=row.id,
+        actor_type="human",
+        result="recovery_requested",
+        result_tone="yellow",
+        detail=f"Circuit breaker {level} recovery requested",
+    )
+    await ws_manager.broadcast(
+        {"type": "circuit_breaker", "level": level, "status": "cooldown", "name": row.name},
+        topic="risk-events",
+    )
     return {"level": level, "status": "recovery_requested"}

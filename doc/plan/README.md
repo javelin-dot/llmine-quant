@@ -11,6 +11,8 @@
 - `phase-3-reliability-explainability.md`：可靠性验证、过拟合检测、数据血缘与解释。
 - `phase-4-paper-trading.md`：模拟盘闭环。
 - `phase-5-live-readiness.md`：实盘前准备与安全审批。
+- `gap-analysis.md`：**2026-05-13 全局差距分析**，从完整主流程出发列出 P0→P3 问题清单与文件定位。
+- `roadmap.md`：**对应 gap-analysis 的修复路线图**，按 Sprint 排列，含具体任务、文件和实现方案。
 
 ## 总路线
 
@@ -26,11 +28,19 @@ Phase 3  可靠性、可解释性、数据血缘           [已完成]
 Phase 4  模拟盘闭环                         [已完成]
    ↓
 Phase 5  实盘前安全、审批、券商适配           [下一阶段]
-   ↓
-Phase 4  模拟盘闭环                         [未开始]
-   ↓
-Phase 5  实盘前安全、审批、券商适配           [未开始]
 ```
+
+## 2026-05-13 全局差距分析
+
+执行了完整的前后端差距扫描，详见 `gap-analysis.md` 和 `roadmap.md`。
+
+关键发现（按严重程度）：
+- **P0**：Dashboard 类型合约错误、Backtest 未接 strategyId、WebSocket 无客户端
+- **P1**：8 个 API 模块返回硬编码假数据、7 个领域无数据库迁移、操作接口是空壳、Paper Trading 无前端
+- **P2**：api.ts 缺 14 个已存在后端端点的调用、Audit 未读 DB、Explain 固定为假信号
+- **P3**：Agent 编排断路、LLM 状态无监控
+
+这些问题与 Phase 5 任务存在重叠，建议将 gap-analysis 的 Sprint 1-2 任务与 Phase 5 并行推进。
 
 ## 当前状态摘要
 

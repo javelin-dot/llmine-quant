@@ -2,12 +2,39 @@ import { mock } from '../data'
 import type { MockData } from '../data/types'
 
 const API_PREFIX = '/api/v1'
+const TOKEN_KEY = 'llmine_token'
+
+// ── Auth token store ──────────────────────────────────────────────────────────
+let _token: string | null = localStorage.getItem(TOKEN_KEY)
+
+export const authStore = {
+  getToken: () => _token,
+  setToken: (t: string) => {
+    _token = t
+    localStorage.setItem(TOKEN_KEY, t)
+  },
+  clearToken: () => {
+    _token = null
+    localStorage.removeItem(TOKEN_KEY)
+  },
+  isAuthenticated: () => _token !== null,
+}
+
+function _authHeader(): Record<string, string> {
+  return _token ? { Authorization: `Bearer ${_token}` } : {}
+}
+
+function _onUnauthorized() {
+  authStore.clearToken()
+  window.dispatchEvent(new CustomEvent('llmine:unauthorized'))
+}
 
 async function getJson<T>(path: string, fallback: () => T): Promise<T> {
   try {
     const res = await fetch(`${API_PREFIX}${path}`, {
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ..._authHeader() },
     })
+    if (res.status === 401) { _onUnauthorized(); return fallback() }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return (await res.json()) as T
   } catch {
@@ -18,9 +45,10 @@ async function getJson<T>(path: string, fallback: () => T): Promise<T> {
 async function postJson<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${API_PREFIX}${path}`, {
     method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ..._authHeader() },
     body: JSON.stringify(body),
   })
+  if (res.status === 401) { _onUnauthorized(); throw new Error('Unauthorized') }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(text || `HTTP ${res.status}`)
@@ -31,9 +59,10 @@ async function postJson<T>(path: string, body: object): Promise<T> {
 async function putJson<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${API_PREFIX}${path}`, {
     method: 'PUT',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ..._authHeader() },
     body: JSON.stringify(body),
   })
+  if (res.status === 401) { _onUnauthorized(); throw new Error('Unauthorized') }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(text || `HTTP ${res.status}`)
@@ -44,12 +73,22 @@ async function putJson<T>(path: string, body: object): Promise<T> {
 async function deleteJson(path: string): Promise<void> {
   const res = await fetch(`${API_PREFIX}${path}`, {
     method: 'DELETE',
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ..._authHeader() },
   })
+  if (res.status === 401) { _onUnauthorized(); throw new Error('Unauthorized') }
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(text || `HTTP ${res.status}`)
   }
+}
+
+export interface TokenResponse {
+  access_token: string
+  token_type: string
+  expires_in: number
+  user_id: string
+  name: string
+  email: string
 }
 
 export interface StrategyDetail {
@@ -331,9 +370,116 @@ export interface RunEodSummary {
   nav: number | null
 }
 
+// MockData['dashboard'] already includes meta/system/modals — use it directly.
 type DashboardOverview = MockData['dashboard']
 
+export interface StrategyTemplate {
+  id: string
+  name: string
+  risk: string
+  market: string
+  family: string
+  desc: string
+}
+
+export interface StrategyTransitionPayload {
+  target: string
+  note?: string
+}
+
+export interface AuditRow {
+  time: string
+  actor: string
+  actorType: string
+  action: string
+  resource: string
+  result: string
+  resultTone: string
+  confidence: number
+  detail: string
+  traceId: string
+}
+
+export interface MarketBarImportAksharePayload {
+  symbols: string[]
+  start_date: string
+  end_date: string
+  adjust?: string
+}
+
+export interface MarketBarDailyOut {
+  id: string
+  symbol: string
+  trade_date: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  amount: number | null
+  adjusted_close: number | null
+}
+
+export interface FeatureOut {
+  id: string
+  name: string
+  version: string
+  kind: string
+  description: string | null
+  computationWindow: number | null
+  validated: boolean
+  permissionScope: string
+}
+
+export interface MarketDataImportSummary {
+  source: string
+  total_rows: number
+  imported_rows: number
+  inserted_rows: number
+  updated_rows: number
+  skipped_rows: number
+  symbols: string[]
+  start_date: string | null
+  end_date: string | null
+  errors: string[]
+}
+
 export const api = {
+  auth: {
+    login: async (email: string, password: string): Promise<TokenResponse> => {
+      const form = new URLSearchParams({ username: email, password })
+      const res = await fetch(`${API_PREFIX}/auth/login`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      return (await res.json()) as TokenResponse
+    },
+    register: async (name: string, email: string, password: string): Promise<TokenResponse> => {
+      const res = await fetch(`${API_PREFIX}/auth/register`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      return (await res.json()) as TokenResponse
+    },
+    logout: (token: string) =>
+      postJson<{ status: string }>('/auth/logout', { access_token: token }),
+    refresh: (token: string) =>
+      postJson<TokenResponse>('/auth/refresh', { access_token: token }),
+    me: () =>
+      fetch(`${API_PREFIX}/auth/me`, {
+        headers: { Accept: 'application/json', ..._authHeader() },
+      }).then(r => r.ok ? r.json() : null),
+  },
   dashboard: {
     overview: () =>
       getJson<DashboardOverview>('/dashboard/overview', () => mock.dashboard),
@@ -347,6 +493,16 @@ export const api = {
         progress: number
         stage?: string
       }>('/strategies/tasks', payload),
+    createDraft: (payload: {
+      name: string
+      family: string
+      type?: string
+      description?: string | null
+      riskProfile: string
+      market: string
+      universe?: string | null
+      frequency?: string
+    }) => postJson<{ strategy_id: string; status: string }>('/strategies/', payload),
     getTask: (taskId: string) =>
       getJson<{
         id: string
@@ -369,6 +525,18 @@ export const api = {
       })),
     getFeed: () =>
       getJson<MockData['strategy']['feed']>('/strategies/feed', () => mock.strategy.feed),
+    templates: () =>
+      getJson<StrategyTemplate[]>('/strategies/templates', () => []),
+    events: (strategyId: string) =>
+      getJson<{ id: string; stage: string; event: string; progress: number; createdAt: string }[]>(
+        `/strategies/${encodeURIComponent(strategyId)}/events`,
+        () => [],
+      ),
+    transition: (strategyId: string, payload: StrategyTransitionPayload) =>
+      postJson<{ strategy_id: string; status: string }>(
+        `/strategies/${encodeURIComponent(strategyId)}/transition`,
+        payload,
+      ),
     detail: (strategyId: string) =>
       getJson<StrategyDetail>(`/strategies/${encodeURIComponent(strategyId)}`, () => {
         throw new Error('Strategy detail not available in mock')
@@ -426,16 +594,52 @@ export const api = {
   },
   portfolio: {
     overview: () => getJson<MockData['portfolio']>('/portfolio/overview', () => mock.portfolio),
+    approveRebalance: (proposalId: string) =>
+      postJson<{ proposal_id: string; status: string }>(
+        `/portfolio/rebalance/${encodeURIComponent(proposalId)}/approve`,
+        {},
+      ),
   },
   execution: {
     overview: () => getJson<MockData['execution']>('/execution/overview', () => mock.execution),
+    approve: (approvalId: string) =>
+      postJson<{ approval_id: string; status: string }>(
+        `/execution/approvals/${encodeURIComponent(approvalId)}/approve`,
+        {},
+      ),
+    reject: (approvalId: string, reason?: string) =>
+      postJson<{ approval_id: string; status: string }>(
+        `/execution/approvals/${encodeURIComponent(approvalId)}/reject`,
+        { reason: reason ?? '' },
+      ),
   },
   risk: {
     overview: () => getJson<MockData['risk']>('/risk/overview', () => mock.risk),
+    triggerCircuit: (level: string) =>
+      postJson<{ level: string; status: string }>(
+        `/risk/circuit-breakers/${encodeURIComponent(level)}/trigger`,
+        {},
+      ),
+    recoverCircuit: (level: string) =>
+      postJson<{ level: string; status: string }>(
+        `/risk/circuit-breakers/${encodeURIComponent(level)}/recover`,
+        {},
+      ),
   },
   data: {
     overview: () => getJson<MockData['data']>('/data/overview', () => mock.data),
     symbols: () => getJson<SymbolSummary[]>('/data/symbols', () => []),
+    marketBars: (symbol?: string, startDate?: string, endDate?: string, limit = 500) => {
+      const params = new URLSearchParams()
+      if (symbol) params.set('symbol', symbol)
+      if (startDate) params.set('startDate', startDate)
+      if (endDate) params.set('endDate', endDate)
+      params.set('limit', String(limit))
+      return getJson<MarketBarDailyOut[]>(`/data/market-bars?${params}`, () => [])
+    },
+    importAkshare: (payload: MarketBarImportAksharePayload) =>
+      postJson<MarketDataImportSummary>('/data/market-bars/import/akshare', payload),
+    features: () => getJson<FeatureOut[]>('/data/features', () => []),
   },
   security: {
     overview: () => getJson<MockData['security']>('/security/overview', () => mock.security),
@@ -446,6 +650,12 @@ export const api = {
   },
   audit: {
     overview: () => getJson<MockData['audit']>('/audit/overview', () => mock.audit),
+    logs: (actorType?: string, limit = 50, offset = 0) => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (actorType) params.set('actor_type', actorType)
+      return getJson<AuditRow[]>(`/audit/logs?${params}`, () => [])
+    },
+    registry: () => getJson<{ name: string; level: string; levelTone: string; desc: string; agents: string[] }[]>('/audit/registry', () => []),
   },
   paper: {
     createAccount: (payload: PaperAccountCreatePayload) =>
