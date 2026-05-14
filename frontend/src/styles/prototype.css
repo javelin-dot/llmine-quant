@@ -15034,7 +15034,7 @@ h2 {
 
 .bt-agent-table-head {
   display: grid;
-  grid-template-columns: 20px 90px 52px 120px 52px 1fr;
+  grid-template-columns: 20px 90px 60px 52px 120px 52px 1fr;
   gap: 0 8px;
   padding: 5px 10px;
   background: rgba(255,255,255,.04);
@@ -15054,7 +15054,7 @@ h2 {
 
 .bt-agent-table-row {
   display: grid;
-  grid-template-columns: 20px 90px 52px 120px 52px 1fr;
+  grid-template-columns: 20px 90px 60px 52px 120px 52px 1fr;
   gap: 0 8px;
   padding: 6px 10px;
   border-bottom: 1px solid rgba(255,255,255,.04);
@@ -15111,6 +15111,19 @@ h2 {
 }
 .bt-agent-table-row.deselected .bt-atr-symbol,
 .bt-agent-table-row.off .bt-atr-symbol {
+  color: var(--text-muted);
+}
+
+.bt-ath-name { }
+.bt-atr-name {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bt-agent-table-row.deselected .bt-atr-name,
+.bt-agent-table-row.off .bt-atr-name {
   color: var(--text-muted);
 }
 

@@ -131,6 +131,7 @@ class UniverseCandidate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     symbol: str
+    name: str | None = None
     bars: int
     start_date: str = Field(alias="startDate")
     end_date: str = Field(alias="endDate")

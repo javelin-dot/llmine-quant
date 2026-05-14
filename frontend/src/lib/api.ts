@@ -316,6 +316,7 @@ export interface UniverseSuggestCriteria {
 
 export interface UniverseCandidate {
   symbol: string
+  name: string | null
   bars: number
   startDate: string
   endDate: string

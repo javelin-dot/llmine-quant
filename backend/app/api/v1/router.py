@@ -14,6 +14,7 @@ from app.api.v1 import (
     explain,
     paper,
     portfolio,
+    quotes,
     risk,
     security,
     strategies,
@@ -26,6 +27,7 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboar
 api_router.include_router(data.router, prefix="/data", tags=["Data Operations"])
 api_router.include_router(strategies.router, prefix="/strategies", tags=["Strategy Factory"])
 api_router.include_router(backtests.router, prefix="/backtests", tags=["Backtest Lab"])
+api_router.include_router(quotes.router, prefix="/quotes", tags=["Market Quotes"])
 api_router.include_router(risk.router, prefix="/risk", tags=["Risk Control"])
 api_router.include_router(portfolio.router, prefix="/portfolio", tags=["Portfolio Cockpit"])
 api_router.include_router(execution.router, prefix="/execution", tags=["Execution Center"])

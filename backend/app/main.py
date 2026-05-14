@@ -11,6 +11,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.tracing import tracing_middleware
 from app.api.v1.router import api_router
 from app.api.v1.ws import router as ws_router
+from app.services.quote_stream import quote_stream
 
 configure_logging()
 logger = get_logger("main")
@@ -26,9 +27,12 @@ async def lifespan(app: FastAPI):
         env=settings.env,
         llm_provider=settings.llm_provider,
         llm_source=settings.llm_source,
+        market_data_provider=settings.market_data_provider,
         anthropic_base_url=settings.anthropic_base_url,
     )
+    quote_stream.start()
     yield
+    quote_stream.stop()
     logger.info("shutdown")
 
 

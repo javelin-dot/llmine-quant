@@ -199,11 +199,59 @@ _UNIVERSE_SYSTEM_PROMPT = """你是量化交易股票池构建（Universe Constr
 
 @router.post("/universe/suggest", response_model=UniverseSuggestOut)
 async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> UniverseSuggestOut:
-    """AI-powered universe builder: calls the configured LLM to select and explain each symbol."""
-    from app.integrations.llm.factory import get_llm_provider
+    """AI-powered universe builder.
 
-    # ── Step 1: fetch all available symbols with stats ──
-    all_rows = (
+    Candidate pool:  real A-share stocks from CSI 300/500 (via AKShare).
+    Data-ready flag: cross-references MarketBarDaily to mark which candidates
+                     already have historical data available for backtesting.
+    LLM selection:   the configured LLM picks and explains each symbol.
+    """
+    import asyncio as _asyncio
+    from app.integrations.llm.factory import get_llm_provider
+    from app.integrations.market_data.factory import get_market_data_provider
+
+    # ── Step 1: build real candidate pool from CSI 300/500 ──────────────
+    candidates_raw: list[dict] = []
+    try:
+        import akshare as ak
+
+        # CSI 300 (沪深300) + CSI 500 (中证500) — both fast via CSINDEX weight API
+        index_codes = ["000300", "000905"]
+        index_dfs = await _asyncio.gather(
+            *[_asyncio.to_thread(ak.index_stock_cons_weight_csindex, symbol=code)
+              for code in index_codes],
+            return_exceptions=True,
+        )
+        seen: set[str] = set()
+        for df in index_dfs:
+            if isinstance(df, Exception) or df is None or df.empty:
+                continue
+            for _, row in df.iterrows():
+                code = str(row.get("成分券代码", "")).strip()
+                exch = str(row.get("交易所", "")).strip()
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+                suffix = "SH" if "上海" in exch else "SZ"
+                symbol = f"{code}.{suffix}"
+                weight = float(row.get("权重", 0) or 0)
+                name = str(row.get("成分券名称", ""))
+                candidates_raw.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "weight": weight,
+                    # bars/dates filled after DB cross-reference below
+                    "bars": 0,
+                    "start_date": "",
+                    "end_date": "",
+                    "coverage_days": 0,
+                    "has_local_data": False,
+                })
+    except Exception:  # noqa: BLE001
+        pass  # fall through to DB-only mode below
+
+    # ── Step 2: cross-reference with MarketBarDaily for data-ready flag ──
+    db_rows = (
         await db.execute(
             select(
                 MarketBarDaily.symbol,
@@ -212,65 +260,75 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
                 func.max(MarketBarDaily.trade_date).label("end_date"),
             )
             .group_by(MarketBarDaily.symbol)
-            .order_by(func.count(MarketBarDaily.id).desc())
         )
     ).all()
-
-    if not all_rows:
-        return UniverseSuggestOut(
-            symbols=[],
-            candidates=[],
-            diversityScore=0.0,
-            coverageDays=0,
-            recommendation="本地无行情数据，请先通过「数据」模块导入市场数据。",
-        )
-
-    # ── Step 2: compute candidate metadata ──
-    candidates_raw = []
-    for row in all_rows:
+    db_stats: dict[str, dict] = {}
+    for row in db_rows:
         try:
-            coverage = (_date.fromisoformat(row.end_date) - _date.fromisoformat(row.start_date)).days
+            cov = (_date.fromisoformat(row.end_date) - _date.fromisoformat(row.start_date)).days
         except Exception:
-            coverage = row.bars
-        candidates_raw.append({
-            "symbol": row.symbol,
+            cov = int(row.bars)
+        db_stats[row.symbol] = {
             "bars": int(row.bars),
             "start_date": row.start_date,
             "end_date": row.end_date,
-            "coverage_days": coverage,
-        })
+            "coverage_days": cov,
+        }
 
+    # Merge DB stats into AKShare candidates
+    for c in candidates_raw:
+        if c["symbol"] in db_stats:
+            s = db_stats[c["symbol"]]
+            c.update(s, has_local_data=True)
+
+    # If AKShare fetch failed, fall back to DB-only list
+    if not candidates_raw:
+        for sym, stats in db_stats.items():
+            candidates_raw.append({
+                "symbol": sym, "name": "", "weight": 0.0,
+                "has_local_data": True, **stats,
+            })
+
+    if not candidates_raw:
+        return UniverseSuggestOut(
+            symbols=[], candidates=[], diversityScore=0.0, coverageDays=0,
+            recommendation="未能获取市场标的列表（AKShare 网络异常）且本地无行情数据，请检查网络或先通过「数据」模块导入行情。",
+        )
+
+    # Sort: local-data-ready first, then by index weight
+    candidates_raw.sort(key=lambda c: (-int(c["has_local_data"]), -c["weight"]))
+
+    # ── Step 3: build LLM prompt ──────────────────────────────────────────
     strategy_desc = {
-        "trend": "趋势跟踪（双均线）：偏好趋势明显、流动性高、数据连续的标的",
-        "momentum": "横截面动量：偏好相对强弱分化明显、覆盖期长的多标的池",
-        "mean_reversion": "均值回归：偏好波动性较高、均值回复特征明显的标的",
+        "trend": "趋势跟踪（双均线）：偏好趋势明显、流动性高、权重较大的蓝筹标的",
+        "momentum": "横截面动量：偏好指数权重分散、行业覆盖广的多标的池",
+        "mean_reversion": "均值回归：偏好波动性较高、行业分散的标的",
     }.get(payload.strategy_family, f"量化策略（{payload.strategy_family}）")
 
-    # Limit context to avoid token overflow (send at most 60 symbols to LLM)
     context_symbols = candidates_raw[:60]
-    symbol_table = "\n".join(
-        f"  {c['symbol']}: {c['bars']}根K线, {c['start_date']}~{c['end_date']}, 覆盖{c['coverage_days']}天"
-        for c in context_symbols
-    )
-    excluded_from_context = candidates_raw[60:]
+    extra = len(candidates_raw) - len(context_symbols)
 
-    prompt = f"""当前系统本地可用的市场行情数据如下（共{len(all_rows)}个标的，按K线数量降序）：
+    def _row_line(c: dict) -> str:
+        data_tag = f"本地数据:{c['bars']}根K线({c['start_date']}~{c['end_date']})" if c["has_local_data"] else "需导入数据"
+        return f"  {c['symbol']} {c['name']}: 指数权重{c['weight']:.3f}%, {data_tag}"
+
+    symbol_table = "\n".join(_row_line(c) for c in context_symbols)
+
+    prompt = f"""以下是沪深300+中证500成分股（共{len(candidates_raw)}个），含指数权重和本地历史数据状态：
 
 {symbol_table}
-{"（另有 " + str(len(excluded_from_context)) + " 个数据极少的标的未展示）" if excluded_from_context else ""}
+{"（另有 " + str(extra) + " 个标的未展示）" if extra else ""}
 
 策略构建需求：
 - 策略类型：{strategy_desc}
-- 最少K线要求：{payload.min_bars} 根（低于此值数据不足，不可用）
 - 目标标的数：{payload.max_symbols} 个
-- 多样性要求：{"是，避免过度集中" if payload.diversify else "否"}
+- 多样性要求：{"是，避免过度集中在单一行业" if payload.diversify else "否"}
 
-请从上述标的中选择最适合该策略的最多 {payload.max_symbols} 个标的。
-对每个选中的标的，给出1-2句选择理由（聚焦数据质量和策略适配性，不得基于历史收益）。
-对每个未选中但数据满足最少K线要求的标的，给出1句排除理由。
-最后给出整体股票池构建逻辑（2-3句）。"""
+注意：优先从"本地数据"已就绪的标的中选择（可立即回测），也可选择"需导入数据"的标的（需先同步历史数据）。
+对每个选中标的，给出1-2句理由（聚焦行业分散性、策略适配性，禁止基于历史涨跌推荐）。
+对主要排除标的给出1句理由。最后给出整体股票池构建逻辑（2-3句）。"""
 
-    # ── Step 3: call LLM ──
+    # ── Step 4: call LLM ─────────────────────────────────────────────────
     llm_result: dict | None = None
     ai_model: str | None = None
     try:
@@ -284,14 +342,14 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
         llm_result = raw
         ai_model = provider.model or provider.name
     except Exception:
-        llm_result = None  # fall back to heuristic
+        llm_result = None
 
-    # ── Step 4: merge LLM decisions with candidate metadata ──
+    # ── Step 5: merge LLM decisions ──────────────────────────────────────
     symbol_map = {c["symbol"]: c for c in candidates_raw}
     reason_map: dict[str, str] = {}
     selected_symbols: list[str] = []
 
-    if llm_result and isinstance(llm_result.get("selected"), list):
+    if llm_result and isinstance(llm_result.get("selected"), list) and llm_result["selected"]:
         for item in llm_result["selected"]:
             sym = item.get("symbol", "")
             if sym in symbol_map:
@@ -303,50 +361,60 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
                 reason_map[sym] = item.get("reason", "AI 未推荐")
         ai_rationale = llm_result.get("rationale") or llm_result.get("diversity_note")
     else:
-        # Heuristic fallback: select by bar count, skip below min_bars
+        # Heuristic fallback: prefer data-ready, then by weight
         for c in candidates_raw:
-            if c["bars"] >= payload.min_bars and len(selected_symbols) < payload.max_symbols:
-                selected_symbols.append(c["symbol"])
-                reason_map[c["symbol"]] = f"数据覆盖充足（{c['bars']}根K线，{c['coverage_days']}天）"
-            elif c["bars"] < payload.min_bars:
-                reason_map[c["symbol"]] = f"数据不足（{c['bars']}根 < 要求{payload.min_bars}根）"
+            if len(selected_symbols) >= payload.max_symbols:
+                break
+            selected_symbols.append(c["symbol"])
+            tag = "本地数据就绪" if c["has_local_data"] else "需先导入历史数据"
+            reason_map[c["symbol"]] = f"沪深300/中证500成分股，指数权重 {c['weight']:.3f}%，{tag}"
         ai_rationale = None
         ai_model = None
 
     selected_set = set(selected_symbols)
     candidates: list[UniverseCandidate] = []
-    for c in candidates_raw:
+    # Only expose candidates that are either selected or have local data (keep UI manageable)
+    exposed = [c for c in candidates_raw if c["symbol"] in selected_set or c["has_local_data"]]
+    if len(exposed) < 5:
+        exposed = candidates_raw[:20]
+    for c in exposed:
+        start = c["start_date"] or "—"
+        end = c["end_date"] or "—"
         candidates.append(UniverseCandidate(
             symbol=c["symbol"],
+            name=c.get("name") or None,
             bars=c["bars"],
-            startDate=c["start_date"],
-            endDate=c["end_date"],
+            startDate=start,
+            endDate=end,
             coverageDays=c["coverage_days"],
             selected=c["symbol"] in selected_set,
             reason=reason_map.get(c["symbol"]),
         ))
 
-    # ── Step 5: compute diversity score ──
+    # ── Step 6: diversity score ───────────────────────────────────────────
     n = len(selected_symbols)
     if n > 0:
-        sel_candidates = [c for c in candidates if c.selected]
-        avg_bars = sum(c.bars for c in sel_candidates) / n
-        diversity_score = round(min(n / 20, 1.0) * 0.5 + min(avg_bars / 252, 1.0) * 0.5, 2)
-        try:
-            coverage_days = (
-                _date.fromisoformat(max(c.end_date for c in sel_candidates))
-                - _date.fromisoformat(min(c.start_date for c in sel_candidates))
-            ).days
-        except Exception:
-            coverage_days = int(avg_bars)
+        sel_meta = [c for c in candidates_raw if c["symbol"] in selected_set]
+        data_ready = sum(1 for c in sel_meta if c["has_local_data"])
+        avg_weight = sum(c["weight"] for c in sel_meta) / n
+        diversity_score = round(
+            min(n / payload.max_symbols, 1.0) * 0.5
+            + (1 - min(avg_weight / 5.0, 1.0)) * 0.5,
+            2,
+        )
+        data_dates = [c["end_date"] for c in sel_meta if c["end_date"]]
+        coverage_days = max(
+            (_date.fromisoformat(max(data_dates)) - _date.fromisoformat(min(data_dates))).days, 0
+        ) if len(data_dates) >= 2 else 0
     else:
         diversity_score = 0.0
         coverage_days = 0
+        data_ready = 0
 
     rec = ai_rationale or (
-        "无可用标的，请先导入行情数据。" if n == 0 else
-        f"AI 推荐 {n} 个标的（数量偏少，建议导入更多品种以降低过拟合风险）。" if n < 5 else
-        f"AI 推荐 {n} 个标的，已按策略类型和数据质量综合筛选。"
+        f"AI 推荐 {n} 个沪深300/中证500成分股；其中 {data_ready} 个本地数据已就绪可立即回测，"
+        f"其余 {n - data_ready} 个需先通过「数据」模块同步历史行情。"
+        if n > 0 else "未能生成推荐，请检查网络连接后重试。"
     )
 
     return UniverseSuggestOut(

@@ -99,11 +99,22 @@ def _is_universe_suggest_schema(schema: dict[str, Any]) -> bool:
 def _mock_universe_response(prompt: str) -> dict[str, Any]:
     """Parse symbol list from prompt and return a mock AI-selected universe."""
     import re
-    # Extract symbol codes from the prompt table (format: "  000001.SZ: ...")
     symbols_found: list[tuple[str, int, int]] = []
-    for m in re.finditer(r"(\w+\.\w+):\s*(\d+)根K线,.*?覆盖(\d+)天", prompt):
-        sym, bars, days = m.group(1), int(m.group(2)), int(m.group(3))
-        symbols_found.append((sym, bars, days))
+
+    # New format (CSI index pool):
+    #   300750.SZ 宁德时代: 指数权重4.393%, 本地数据:1055根K线(2022-01-04~2026-05-08)
+    for m in re.finditer(r"(\w+\.\w+)\s+\S+:\s*指数权重[\d.]+%,\s*本地数据:(\d+)根K线", prompt):
+        sym, bars = m.group(1), int(m.group(2))
+        symbols_found.append((sym, bars, bars))
+    # New format — stocks without local data
+    for m in re.finditer(r"(\w+\.\w+)\s+\S+:\s*指数权重[\d.]+%,\s*需导入数据", prompt):
+        symbols_found.append((m.group(1), 0, 0))
+
+    # Legacy format (old DB-only prompt): "  000001.SZ: 1055根K线, ..., 覆盖1585天"
+    if not symbols_found:
+        for m in re.finditer(r"(\w+\.\w+):\s*(\d+)根K线,.*?覆盖(\d+)天", prompt):
+            sym, bars, days = m.group(1), int(m.group(2)), int(m.group(3))
+            symbols_found.append((sym, bars, days))
 
     # Mock: select top 20 by bars count (already sorted in prompt), skip < 60 bars
     selected = []

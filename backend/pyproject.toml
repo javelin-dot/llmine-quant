@@ -40,6 +40,10 @@ llm = [
     "anthropic>=0.49.0",
     "openai>=1.60.0",
 ]
+market-data = [
+    "akshare>=1.16.0",   # free A-share data; no registration required
+    "pandas>=2.0.0",     # pulled in by akshare anyway, pinned for clarity
+]
 
 [tool.ruff]
 line-length = 120

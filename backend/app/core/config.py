@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     default_page_size: int = 20
     max_page_size: int = 100
 
+    # Market data provider
+    # "akshare" (free, default) | "tushare" | "wind" | "mock"
+    # Add new commercial providers in app/integrations/market_data/factory.py
+    market_data_provider: str = "akshare"
+    market_data_poll_interval: int = 3   # seconds between quote polls during trading hours
+    tushare_token: str | None = None     # required when market_data_provider=tushare
+
     # LLM provider
     # Leave `llm_provider` empty to auto-select from detected credentials.
     llm_provider: str = ""

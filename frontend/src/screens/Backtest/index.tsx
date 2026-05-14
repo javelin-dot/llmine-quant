@@ -562,6 +562,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                       <div className="bt-agent-table-head">
                         <span className="bt-ath-status" />
                         <span className="bt-ath-symbol">代码</span>
+                        <span className="bt-ath-name">名称</span>
                         <span className="bt-ath-bars">K线</span>
                         <span className="bt-ath-range">数据区间</span>
                         <span className="bt-ath-days">覆盖</span>
@@ -581,6 +582,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                               {isSelected ? '✓' : wasRecommended ? '✕' : '○'}
                             </span>
                             <span className="bt-atr-symbol">{c.symbol}</span>
+                            <span className="bt-atr-name">{c.name ?? '—'}</span>
                             <span className="bt-atr-bars">{c.bars}</span>
                             <span className="bt-atr-range">{c.startDate.slice(0, 7)} ~ {c.endDate.slice(0, 7)}</span>
                             <span className="bt-atr-days">{c.coverageDays}d</span>
