@@ -135,7 +135,20 @@ export default function Strategy({ onNavigate }: StrategyProps) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sf2-drawer-header">
-              <span className="sf2-drawer-title">新建策略</span>
+              <div className="sf2-drawer-header-left">
+                <div className="sf2-drawer-breadcrumb">
+                  <span>策略工厂</span>
+                  <span className="sf2-drawer-crumb-sep">›</span>
+                  <span className="sf2-drawer-crumb-active">新建策略</span>
+                </div>
+                <div className="sf2-drawer-steps">
+                  <span className="sf2-drawer-step active">① 配置</span>
+                  <span className="sf2-drawer-step-line" />
+                  <span className="sf2-drawer-step">② 生成</span>
+                  <span className="sf2-drawer-step-line" />
+                  <span className="sf2-drawer-step">③ 审查</span>
+                </div>
+              </div>
               <button
                 className="sf2-drawer-close"
                 onClick={() => setDrawerOpen(false)}

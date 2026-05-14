@@ -18,39 +18,44 @@ const STRATEGY_STYLES = [
 const RISK_PROFILES: {
   id: string
   label: string
+  labelZh: string
   constraints: { label: string; value: string }[]
 }[] = [
   {
     id: 'conservative',
     label: 'Conservative',
+    labelZh: '保守',
     constraints: [
-      { label: 'Max Drawdown', value: '≤ 8%' },
-      { label: 'Single trade loss', value: '≤ 1%' },
-      { label: 'Gross Exposure', value: '≤ 30%' },
+      { label: '最大回撤', value: '≤ 8%' },
+      { label: '单笔损失', value: '≤ 1%' },
+      { label: '总暴露', value: '≤ 30%' },
     ],
   },
   {
     id: 'balanced',
     label: 'Balanced',
+    labelZh: '均衡',
     constraints: [
-      { label: 'Max Drawdown', value: '≤ 15%' },
-      { label: 'Single trade loss', value: '≤ 3%' },
-      { label: 'Gross Exposure', value: '≤ 60%' },
+      { label: '最大回撤', value: '≤ 15%' },
+      { label: '单笔损失', value: '≤ 3%' },
+      { label: '总暴露', value: '≤ 60%' },
     ],
   },
   {
     id: 'aggressive',
     label: 'Aggressive',
+    labelZh: '激进',
     constraints: [
-      { label: 'Max Drawdown', value: '≤ 25%' },
-      { label: 'Single trade loss', value: '≤ 5%' },
-      { label: 'Gross Exposure', value: '≤ 90%' },
+      { label: '最大回撤', value: '≤ 25%' },
+      { label: '单笔损失', value: '≤ 5%' },
+      { label: '总暴露', value: '≤ 90%' },
     ],
   },
   {
     id: 'custom',
     label: 'Custom',
-    constraints: [{ label: 'Risk constraints', value: 'User-defined' }],
+    labelZh: '自定义',
+    constraints: [{ label: '风控约束', value: '用户定义' }],
   },
 ]
 
@@ -102,48 +107,41 @@ function frequencyLabel(freq: string): string {
 export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate }: StrategyBuilderProps) {
   const data = useStrategy()
 
-  // Strategy Brief form state
   const [market, setMarket] = useState('A-Share')
   const [universe, setUniverse] = useState('')
   const [strategyStyle, setStrategyStyle] = useState('Value')
   const [riskProfile, setRiskProfile] = useState('balanced')
   const [nlBrief, setNlBrief] = useState(data.nlPrompt)
 
-  // Generation state
   const [generating, setGenerating] = useState(false)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [taskStatus, setTaskStatus] = useState<string | null>(null)
   const [taskProgress, setTaskProgress] = useState(0)
   const [actionNotice, setActionNotice] = useState<string | null>(null)
 
-  // Draft result
   const [draftResult, setDraftResult] = useState<StrategyDraft | null>(null)
+  const [activeTab, setActiveTab] = useState<'trace' | 'draft'>('trace')
 
-  // Trace state
   const [traceItems, setTraceItems] = useState<TraceItem[]>([
-    { agent: 'Research Agent', message: 'Waiting for strategy brief...', status: 'pending' },
-    { agent: 'Strategy Agent', message: 'Waiting for research output...', status: 'pending' },
-    { agent: 'Risk Agent', message: 'Waiting for signal rules...', status: 'pending' },
-    { agent: 'Backtest Agent', message: 'Waiting for risk validation...', status: 'pending' },
+    { agent: 'Research Agent', message: '等待策略概要...', status: 'pending' },
+    { agent: 'Strategy Agent', message: '等待研究输出...', status: 'pending' },
+    { agent: 'Risk Agent', message: '等待信号规则...', status: 'pending' },
+    { agent: 'Backtest Agent', message: '等待风险验证...', status: 'pending' },
   ])
   const [showRawLogs, setShowRawLogs] = useState(false)
   const [rawFeed, setRawFeed] = useState(data.feed)
 
   const wsRef = useRef<WebSocket | null>(null)
-  const draftRef = useRef<HTMLDivElement | null>(null)
-  /** Avoid double completion when WS and HTTP poll both see terminal state. */
   const generationDoneRef = useRef(false)
   const nlBriefRef = useRef(nlBrief)
   // eslint-disable-next-line react-hooks/refs
   nlBriefRef.current = nlBrief
 
-  // Build risk constraint text from selected profile
   const riskProfileMeta = RISK_PROFILES.find((r) => r.id === riskProfile)
   const riskConstraintText = riskProfileMeta
     ? riskProfileMeta.constraints.map((c) => `${c.label} ${c.value}`).join(', ')
     : ''
 
-  /** @param nlHint 生成刚完成时传入概要框文案；默认载入最新策略时传 null，避免随输入框抖动重复请求 */
   const buildDraftFromStrategyDetail = useCallback(
     (d: StrategyDetail, nlHint: string | null): StrategyDraft => {
       const metricParts: string[] = []
@@ -217,14 +215,6 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
     [riskConstraintText, universe, strategyStyle]
   )
 
-  // Scroll draft into view when result appears
-  useEffect(() => {
-    if (draftResult && draftRef.current) {
-      draftRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-    }
-  }, [draftResult])
-
-  // 未在生成时：默认展示矩阵中最近更新的一条策略（与 overview 中 matrix 顺序一致）
   useEffect(() => {
     if (generating) return
     if (!data.matrix?.length) {
@@ -239,6 +229,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
         const d = await api.strategy.detail(latestId)
         if (canceled) return
         setDraftResult(buildDraftFromStrategyDetail(d, null))
+        setActiveTab('draft')
       } catch {
         if (!canceled) setDraftResult(null)
       }
@@ -248,7 +239,6 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
     }
   }, [data.matrix, generating, buildDraftFromStrategyDetail])
 
-  // WebSocket (live trace) + HTTP poll (reliable draft — pipeline may finish before WS connects)
   useEffect(() => {
     if (!generating || !taskId) return
 
@@ -293,7 +283,6 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
       }
     }
 
-    /** Only when strategy detail API is unavailable; WS payload rarely carries narrative fields. */
     const applyDraftFromWsDetail = (detail: Record<string, string | undefined>) => {
       setDraftResult({
         id: (detail.strategyId as string) || taskId,
@@ -309,6 +298,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
         riskConstraints: riskConstraintText,
         benchmark: (detail.benchmark as string) || universe || '见概要或详情中的基准设置。',
       })
+      setActiveTab('draft')
     }
 
     const finishSuccess = async (opts: { strategyId: string | null; wsDetail?: Record<string, unknown> }) => {
@@ -316,10 +306,10 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
       generationDoneRef.current = true
       clearPoll()
 
-      updateTrace('backtest', 'completed', 'Backtest completed')
-      updateTrace('risk', 'completed', 'Constraints validated')
-      updateTrace('running', 'completed', 'Signal rules generated')
-      updateTrace('queued', 'completed', 'Market universe scanned')
+      updateTrace('backtest', 'completed', '回测完成')
+      updateTrace('risk', 'completed', '约束验证通过')
+      updateTrace('running', 'completed', '信号规则已生成')
+      updateTrace('queued', 'completed', '市场标的已扫描')
 
       const sid = opts.strategyId
       let draftLoaded = false
@@ -329,6 +319,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
           setDraftResult(
             buildDraftFromStrategyDetail(d, nlBriefRef.current.trim() || null)
           )
+          setActiveTab('draft')
           draftLoaded = true
         } catch {
           draftLoaded = false
@@ -352,6 +343,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
           riskConstraints: riskConstraintText,
           benchmark: universe || '—',
         })
+        setActiveTab('draft')
       }
 
       if (sid) onOpenStrategy?.(sid)
@@ -426,9 +418,9 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
             return [{ time, agent, event: `[${msg.stage}] ${msg.event}`, tone }, ...prev]
           })
 
-          if (msg.stage === 'running') updateTrace('running', 'running', 'Generating signal and rebalance rules...')
-          if (msg.stage === 'risk') updateTrace('risk', 'running', 'Validating constraints...')
-          if (msg.stage === 'backtest') updateTrace('backtest', 'running', 'Running backtest simulation...')
+          if (msg.stage === 'running') updateTrace('running', 'running', '生成信号与再平衡规则...')
+          if (msg.stage === 'risk') updateTrace('risk', 'running', '验证风控约束...')
+          if (msg.stage === 'backtest') updateTrace('backtest', 'running', '运行回测模拟...')
 
           const isDone =
             msg.stage === 'done' || msg.stage === 'succeeded' || msg.stage === 'completed'
@@ -493,18 +485,18 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
   const handleGenerate = async () => {
     if (!nlBrief.trim()) return
 
-    // Reset trace
     setTraceItems([
-      { agent: 'Research Agent', message: 'Scanning market universe...', status: 'running' },
-      { agent: 'Strategy Agent', message: 'Waiting for research output...', status: 'pending' },
-      { agent: 'Risk Agent', message: 'Waiting for signal rules...', status: 'pending' },
-      { agent: 'Backtest Agent', message: 'Waiting for risk validation...', status: 'pending' },
+      { agent: 'Research Agent', message: '扫描市场标的...', status: 'running' },
+      { agent: 'Strategy Agent', message: '等待研究输出...', status: 'pending' },
+      { agent: 'Risk Agent', message: '等待信号规则...', status: 'pending' },
+      { agent: 'Backtest Agent', message: '等待风险验证...', status: 'pending' },
     ])
     setDraftResult(null)
     setRawFeed(data.feed)
     setGenerating(true)
     setTaskProgress(0)
     setTaskStatus('queued')
+    setActiveTab('trace')
 
     try {
       const task = await api.strategy.createTask({
@@ -553,213 +545,262 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
   }
 
   const riskMeta = RISK_PROFILES.find((r) => r.id === riskProfile)
+  const hasOutput = generating || draftResult
 
   return (
-    <div className="strategy-builder">
-      {/* Left: 策略概要 */}
-      <div className="builder-col builder-brief">
-        <div className="builder-section-head">
-          <h4 className="builder-section-title">策略概要</h4>
-          <span className="builder-section-sub">描述交易想法、风控约束与目标市场</span>
-        </div>
+    <div className="sb-shell">
+      {/* ── body: left form + right output ── */}
+      <div className="sb-body">
 
-        <div className="builder-field">
-          <label>市场</label>
-          <div className="builder-segmented">
+        {/* Left: 配置表单 */}
+        <div className="sb-left">
+          <div className="sb-section-label">市场</div>
+          <div className="sb-chips">
             {MARKETS.map((m) => (
               <button
                 key={m}
-                className={market === m ? 'active' : ''}
+                className={`sb-chip ${market === m ? 'active' : ''}`}
                 onClick={() => setMarket(m)}
+                disabled={generating}
               >
                 {m}
               </button>
             ))}
           </div>
-        </div>
 
-        <div className="builder-field">
-          <label>股票池</label>
+          <div className="sb-section-label">股票池</div>
           <input
+            className="sb-input"
             value={universe}
             onChange={(e) => setUniverse(e.target.value)}
-            placeholder="例如：沪深 300、S&P 500、BTC/ETH 永续合约"
+            placeholder="沪深 300 / S&P 500 / BTC 永续"
+            disabled={generating}
           />
-        </div>
 
-        <div className="builder-field">
-          <label>策略类型</label>
-          <select value={strategyStyle} onChange={(e) => setStrategyStyle(e.target.value)}>
+          <div className="sb-section-label">策略类型</div>
+          <select
+            className="sb-select"
+            value={strategyStyle}
+            onChange={(e) => setStrategyStyle(e.target.value)}
+            disabled={generating}
+          >
             {STRATEGY_STYLES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
+              <option key={s} value={s}>{s}</option>
             ))}
           </select>
-        </div>
 
-        <div className="builder-field">
-          <label>风险偏好</label>
-          <div className="builder-risk-options">
+          <div className="sb-section-label">风险偏好</div>
+          <div className="sb-risk-row">
             {RISK_PROFILES.map((r) => (
               <button
                 key={r.id}
-                className={`builder-risk-btn ${riskProfile === r.id ? 'active' : ''}`}
+                className={`sb-risk-btn ${riskProfile === r.id ? 'active' : ''}`}
                 onClick={() => setRiskProfile(r.id)}
+                disabled={generating}
               >
-                {r.label}
+                <span className="sb-risk-en">{r.label}</span>
+                <span className="sb-risk-zh">{r.labelZh}</span>
               </button>
             ))}
           </div>
           {riskMeta && (
-            <div className="builder-risk-constraints">
+            <div className="sb-constraints">
               {riskMeta.constraints.map((c, i) => (
-                <div className="builder-constraint" key={i}>
+                <div className="sb-constraint-row" key={i}>
                   <span>{c.label}</span>
                   <strong>{c.value}</strong>
                 </div>
               ))}
             </div>
           )}
-        </div>
 
-        <div className="builder-field">
-          <label>自然语言描述</label>
+          <div className="sb-section-label">AI 自然语言描述</div>
           <textarea
+            className="sb-textarea"
             value={nlBrief}
             onChange={(e) => setNlBrief(e.target.value)}
-            rows={5}
+            rows={6}
             placeholder="例如：创建一个周频调仓的A股多因子价值策略，要求 ROE > 15%、PE 分位数 < 30%、流动性过滤、最大回撤不超过 15%、基准为沪深 300。"
             disabled={generating}
           />
         </div>
 
-        <div className="builder-actions">
-          <button className="btn builder-cta" onClick={handleGenerate} disabled={generating || !nlBrief.trim()}>
-            {generating ? `生成中... ${taskProgress}%` : '生成策略草案'}
-          </button>
-          <button className="btn secondary" disabled={generating}>
-            保存为模板
-          </button>
+        {/* Right: 生成追踪 / 策略草案 */}
+        <div className="sb-right">
+          {/* Tab bar — shown only when there's output */}
+          {hasOutput && (
+            <div className="sb-tab-bar">
+              <button
+                className={`sb-tab ${activeTab === 'trace' ? 'active' : ''}`}
+                onClick={() => setActiveTab('trace')}
+              >
+                <span className="sb-tab-dot" style={{ background: generating ? 'var(--blue)' : draftResult ? 'var(--green)' : 'var(--subtle)' }} />
+                生成追踪
+              </button>
+              <button
+                className={`sb-tab ${activeTab === 'draft' ? 'active' : ''} ${!draftResult ? 'disabled' : ''}`}
+                onClick={() => { if (draftResult) setActiveTab('draft') }}
+                disabled={!draftResult}
+              >
+                策略草案
+                {draftResult && <span className="sb-tab-badge">就绪</span>}
+              </button>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!hasOutput && (
+            <div className="sb-empty">
+              <div className="sb-empty-glyph">◈</div>
+              <p className="sb-empty-title">填写左侧配置，点击「生成策略草案」</p>
+              <p className="sb-empty-sub">AI Agent 将扫描市场、生成信号规则并完成初步回测验证</p>
+              <div className="sb-empty-steps">
+                <div className="sb-empty-step"><span>01</span>Research Agent 扫描标的池</div>
+                <div className="sb-empty-step"><span>02</span>Strategy Agent 生成信号逻辑</div>
+                <div className="sb-empty-step"><span>03</span>Risk Agent 验证约束</div>
+                <div className="sb-empty-step"><span>04</span>Backtest Agent 回测模拟</div>
+              </div>
+            </div>
+          )}
+
+          {/* Trace tab */}
+          {hasOutput && activeTab === 'trace' && (
+            <div className="sb-trace-panel">
+              {/* Progress bar */}
+              {generating && (
+                <div className="sb-progress-wrap">
+                  <div className="sb-progress-bar">
+                    <div className="sb-progress-fill" style={{ width: `${taskProgress}%` }} />
+                  </div>
+                  <span className="sb-progress-label">{taskStatus || 'queued'} · {taskProgress}%</span>
+                </div>
+              )}
+
+              {/* Trace items */}
+              <div className="sb-trace-list">
+                {traceItems.map((item, i) => (
+                  <div className={`sb-trace-item sb-trace-${item.status}`} key={i}>
+                    <div className="sb-trace-icon">
+                      {item.status === 'completed' && <span className="sb-ti-check">✓</span>}
+                      {item.status === 'running' && <span className="sb-ti-spin" />}
+                      {item.status === 'failed' && <span className="sb-ti-fail">✗</span>}
+                      {item.status === 'pending' && <span className="sb-ti-pending" />}
+                    </div>
+                    <div className="sb-trace-body">
+                      <strong>{item.agent}</strong>
+                      <span>{item.message}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Raw logs toggle */}
+              <button className="sb-log-toggle" onClick={() => setShowRawLogs((v) => !v)}>
+                {showRawLogs ? '▲ 收起原始日志' : '▼ 展开原始 Agent 日志'}
+              </button>
+              {showRawLogs && (
+                <div className="sb-raw-logs">
+                  {rawFeed.slice(0, 30).map((f, i) => (
+                    <div className={`sb-raw-row raw-${f.tone}`} key={i}>
+                      <span className="sb-raw-time">{f.time}</span>
+                      <span className="sb-raw-agent">{f.agent}</span>
+                      <span className="sb-raw-event">{f.event}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Draft tab */}
+          {hasOutput && activeTab === 'draft' && draftResult && (
+            <div className="sb-draft-panel">
+              <div className="sb-draft-header">
+                <span className="sb-draft-badge">草稿</span>
+                <h3 className="sb-draft-name">{draftResult.name}</h3>
+                <span className="sb-draft-id">#{draftResult.id.slice(0, 8)}</span>
+              </div>
+
+              <div className="sb-draft-body">
+                {[
+                  { label: '信号定义', value: draftResult.signalDefinition },
+                  { label: '入场规则', value: draftResult.entryRules },
+                  { label: '出场规则', value: draftResult.exitRules },
+                  { label: '调仓频率', value: draftResult.rebalanceFrequency },
+                  { label: '仓位管理', value: draftResult.positionSizing },
+                  { label: '风控约束', value: draftResult.riskConstraints },
+                  { label: '基准', value: draftResult.benchmark },
+                ].map(({ label, value }) => (
+                  <div className="sb-draft-section" key={label}>
+                    <div className="sb-draft-section-label">{label}</div>
+                    <p className="sb-draft-section-text">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Next actions */}
+              <div className="sb-next-actions">
+                <div className="sb-next-label">下一步操作</div>
+                <div className="sb-next-grid">
+                  <button className="sb-next-btn primary" onClick={() => void handleDraftAction('backtest')}>
+                    <span className="sb-next-icon">⚡</span>
+                    <span className="sb-next-text">
+                      <strong>运行回测</strong>
+                      <em>历史数据验证</em>
+                    </span>
+                  </button>
+                  <button className="sb-next-btn" onClick={() => void handleDraftAction('review')}>
+                    <span className="sb-next-icon">🔍</span>
+                    <span className="sb-next-text">
+                      <strong>审查信号逻辑</strong>
+                      <em>查看代码与详情</em>
+                    </span>
+                  </button>
+                  <button className="sb-next-btn" onClick={() => void handleDraftAction('risk')}>
+                    <span className="sb-next-icon">🛡</span>
+                    <span className="sb-next-text">
+                      <strong>风控检查</strong>
+                      <em>验证风险约束</em>
+                    </span>
+                  </button>
+                  <button className="sb-next-btn" onClick={() => void handleDraftAction('save')}>
+                    <span className="sb-next-icon">💾</span>
+                    <span className="sb-next-text">
+                      <strong>保存草稿</strong>
+                      <em>归档当前版本</em>
+                    </span>
+                  </button>
+                </div>
+                {actionNotice && (
+                  <div className="sb-action-notice">{actionNotice}</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Center: 策略草案 */}
-      <div className="builder-col builder-draft" ref={draftRef}>
-        <div className="builder-section-head">
-          <h4 className="builder-section-title">策略草案</h4>
-          <span className="builder-section-sub">
-            {draftResult
-              ? '审查策略逻辑、约束与下一步操作'
-              : '生成后的策略草案将显示在此处'}
-          </span>
-        </div>
-
-        {!draftResult && !generating && (
-          <div className="draft-empty">
-            <div className="draft-empty-icon">◈</div>
-            <p>暂无策略草案</p>
-            <span>从策略概要生成草案，即可查看策略逻辑、约束与下一步操作。</span>
-          </div>
-        )}
-
-        {generating && !draftResult && (
-          <div className="draft-generating">
-            <div className="draft-generating-spinner" />
-            <p>Strategy Agent 正在生成策略草案…</p>
-            <span>{taskStatus || 'queued'} &middot; {taskProgress}%</span>
-          </div>
-        )}
-
-        {draftResult && (
-          <div className="draft-result">
-            <div className="draft-header">
-              <span className="draft-status">草稿</span>
-              <h3 className="draft-name">{draftResult.name}</h3>
-              <span className="draft-id">#{draftResult.id.slice(0, 8)}</span>
-            </div>
-
-            <div className="draft-sections">
-              <div className="draft-section">
-                <h5>信号定义</h5>
-                <p>{draftResult.signalDefinition}</p>
-              </div>
-              <div className="draft-section">
-                <h5>入场规则</h5>
-                <p>{draftResult.entryRules}</p>
-              </div>
-              <div className="draft-section">
-                <h5>出场规则</h5>
-                <p>{draftResult.exitRules}</p>
-              </div>
-              <div className="draft-section">
-                <h5>调仓频率</h5>
-                <p>{draftResult.rebalanceFrequency}</p>
-              </div>
-              <div className="draft-section">
-                <h5>仓位管理</h5>
-                <p>{draftResult.positionSizing}</p>
-              </div>
-              <div className="draft-section">
-                <h5>风控约束</h5>
-                <p>{draftResult.riskConstraints}</p>
-              </div>
-              <div className="draft-section">
-                <h5>基准</h5>
-                <p>{draftResult.benchmark}</p>
-              </div>
-            </div>
-
-            <div className="draft-next-actions">
-              <span className="draft-next-label">下一步操作</span>
-              <div className="draft-next-buttons">
-                <button className="btn" onClick={() => void handleDraftAction('backtest')}>运行回测</button>
-                <button className="btn secondary" onClick={() => void handleDraftAction('review')}>审查信号逻辑</button>
-                <button className="btn secondary" onClick={() => void handleDraftAction('risk')}>风控检查</button>
-                <button className="btn secondary" onClick={() => void handleDraftAction('save')}>保存草稿</button>
-              </div>
-              {actionNotice && <div className="draft-action-notice">{actionNotice}</div>}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Right: 生成追踪 */}
-      <div className="builder-col builder-trace">
-        <div className="builder-section-head">
-          <h4 className="builder-section-title">生成追踪</h4>
-          <span className="builder-section-sub">Agent 工作流与校验节点</span>
-        </div>
-
-        <div className="trace-list">
-          {traceItems.map((item, i) => (
-            <div className={`trace-item trace-${item.status}`} key={i}>
-              <div className="trace-dot" />
-              <div className="trace-body">
-                <strong>{item.agent}</strong>
-                <span>{item.message}</span>
-              </div>
-              {item.status === 'completed' && <span className="trace-check">&#10003;</span>}
-              {item.status === 'failed' && <span className="trace-cross">&#10007;</span>}
-            </div>
-          ))}
-        </div>
-
-        <button className="trace-toggle" onClick={() => setShowRawLogs((v) => !v)}>
-          {showRawLogs ? '隐藏原始日志' : '查看原始 Agent 日志'}
+      {/* ── Sticky footer ── */}
+      <div className="sb-footer">
+        <button className="sb-footer-secondary" disabled={generating}>
+          保存为模板
         </button>
-
-        {showRawLogs && (
-          <div className="trace-raw">
-            {rawFeed.slice(0, 20).map((f, i) => (
-              <div className={`trace-raw-item raw-${f.tone}`} key={i}>
-                <span className="trace-raw-time">{f.time}</span>
-                <span className="trace-raw-agent">{f.agent}</span>
-                <span className="trace-raw-event">{f.event}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="sb-footer-right">
+          {generating && (
+            <div className="sb-footer-status">
+              <span className="sb-footer-spinner" />
+              <span>Strategy Agent 生成中 · {taskProgress}%</span>
+            </div>
+          )}
+          <button
+            className="sb-footer-cta"
+            onClick={handleGenerate}
+            disabled={generating || !nlBrief.trim()}
+          >
+            {generating ? `生成中 ${taskProgress}%` : '生成策略草案'}
+            {!generating && <span className="sb-footer-arrow">→</span>}
+          </button>
+        </div>
       </div>
     </div>
   )
