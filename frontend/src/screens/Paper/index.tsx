@@ -365,7 +365,8 @@ function AccountDetail({ accountId }: { accountId: string }) {
 
 // ── Main Screen ──────────────────────────────────────────────────────────────
 
-export default function Paper({}: PaperProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export default function Paper(_props: PaperProps) {
   const [accounts, setAccounts] = useState<PaperAccount[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)

@@ -103,6 +103,10 @@ class BacktestMetrics:
     sharpe_ratio: float
     win_rate: float
     turnover: float
+    calmar_ratio: float = 0.0
+    sortino_ratio: float = 0.0
+    volatility: float = 0.0
+    profit_factor: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,7 @@ class DailyBacktestResult:
     in_sample_end_date: str | None = None
     is_metrics: BacktestMetrics | None = None
     oos_metrics: BacktestMetrics | None = None
+    monthly_returns: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +262,8 @@ class DailyBacktestEngine:
             in_sample_end_date=config.in_sample_end_date,
         )
 
+        monthly_rets = _monthly_returns(equity_curve, config.initial_cash)
+
         return DailyBacktestResult(
             strategy_name=strategy.name,
             start_date=trade_dates[0],
@@ -272,6 +279,7 @@ class DailyBacktestEngine:
             in_sample_end_date=config.in_sample_end_date,
             is_metrics=is_metrics,
             oos_metrics=oos_metrics,
+            monthly_returns=monthly_rets,
         )
 
     async def run_and_persist(
@@ -712,17 +720,22 @@ def _calculate_metrics(
     periods = len(equity_curve)
     annual_return = _annualized_return(initial_cash, final_value, periods)
     daily_returns = _daily_returns(initial_cash, equity_curve)
-    non_zero_returns = [daily_return for daily_return in daily_returns if abs(daily_return) > 1e-12]
-    positive_returns = [daily_return for daily_return in non_zero_returns if daily_return > 0]
+    non_zero_returns = [r for r in daily_returns if abs(r) > 1e-12]
+    positive_returns = [r for r in non_zero_returns if r > 0]
     average_equity = sum(point.value for point in equity_curve) / len(equity_curve)
+    max_drawdown = min(point.drawdown for point in equity_curve)
 
     return BacktestMetrics(
         cumulative_return=cumulative_return,
         annual_return=annual_return,
-        max_drawdown=min(point.drawdown for point in equity_curve),
+        max_drawdown=max_drawdown,
         sharpe_ratio=_annualized_sharpe(daily_returns),
         win_rate=len(positive_returns) / len(non_zero_returns) if non_zero_returns else 0.0,
         turnover=sum(trade.amount for trade in trades) / average_equity if average_equity > 0 else 0.0,
+        calmar_ratio=_calmar_ratio(annual_return, max_drawdown),
+        sortino_ratio=_sortino_ratio(daily_returns),
+        volatility=_annualized_volatility(daily_returns),
+        profit_factor=_profit_factor(daily_returns),
     )
 
 
@@ -753,6 +766,61 @@ def _annualized_sharpe(daily_returns: Sequence[float]) -> float:
     if std_return <= 0:
         return 0.0
     return mean_return / std_return * math.sqrt(252)
+
+
+def _calmar_ratio(annual_return: float, max_drawdown: float) -> float:
+    if max_drawdown >= 0:
+        return 0.0
+    return min(annual_return / abs(max_drawdown), 20.0)
+
+
+def _sortino_ratio(daily_returns: Sequence[float]) -> float:
+    if len(daily_returns) < 2:
+        return 0.0
+    mean_return = sum(daily_returns) / len(daily_returns)
+    negative_returns = [r for r in daily_returns if r < 0]
+    if not negative_returns:
+        return 10.0
+    downside_variance = sum(r ** 2 for r in negative_returns) / len(daily_returns)
+    downside_std = math.sqrt(downside_variance)
+    if downside_std <= 0:
+        return 0.0
+    return min(mean_return / downside_std * math.sqrt(252), 20.0)
+
+
+def _annualized_volatility(daily_returns: Sequence[float]) -> float:
+    if len(daily_returns) < 2:
+        return 0.0
+    mean_return = sum(daily_returns) / len(daily_returns)
+    variance = sum((r - mean_return) ** 2 for r in daily_returns) / (len(daily_returns) - 1)
+    return math.sqrt(variance) * math.sqrt(252)
+
+
+def _profit_factor(daily_returns: Sequence[float]) -> float:
+    gains = sum(r for r in daily_returns if r > 0)
+    losses = abs(sum(r for r in daily_returns if r < 0))
+    if losses <= 0:
+        return 10.0
+    return min(gains / losses, 20.0)
+
+
+def _monthly_returns(
+    equity_curve: Sequence[DailyEquityPoint],
+    initial_cash: float,
+) -> dict[str, float]:
+    if not equity_curve:
+        return {}
+    from collections import defaultdict as _defaultdict
+    by_month: dict[str, list[DailyEquityPoint]] = _defaultdict(list)
+    for point in equity_curve:
+        by_month[point.trade_date[:7]].append(point)
+    result: dict[str, float] = {}
+    prev_value = initial_cash
+    for month_key in sorted(by_month):
+        end_value = by_month[month_key][-1].value
+        result[month_key] = round(end_value / prev_value - 1, 6) if prev_value > 0 else 0.0
+        prev_value = end_value
+    return result
 
 
 def _portfolio_value(cash: float, quantities: Mapping[str, float], last_prices: Mapping[str, float]) -> float:

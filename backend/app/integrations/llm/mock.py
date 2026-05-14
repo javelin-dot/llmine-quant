@@ -89,6 +89,51 @@ def _is_strategy_generation_spec_schema(schema: dict[str, Any]) -> bool:
     return "strategy_kind" in props and "factors" in props
 
 
+def _is_universe_suggest_schema(schema: dict[str, Any]) -> bool:
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return False
+    return "selected" in props and "excluded" in props
+
+
+def _mock_universe_response(prompt: str) -> dict[str, Any]:
+    """Parse symbol list from prompt and return a mock AI-selected universe."""
+    import re
+    # Extract symbol codes from the prompt table (format: "  000001.SZ: ...")
+    symbols_found: list[tuple[str, int, int]] = []
+    for m in re.finditer(r"(\w+\.\w+):\s*(\d+)根K线,.*?覆盖(\d+)天", prompt):
+        sym, bars, days = m.group(1), int(m.group(2)), int(m.group(3))
+        symbols_found.append((sym, bars, days))
+
+    # Mock: select top 20 by bars count (already sorted in prompt), skip < 60 bars
+    selected = []
+    excluded = []
+    reasons_select = [
+        "数据连续性强，K线覆盖充足，适合趋势信号计算",
+        "历史数据完整，覆盖多个市场周期，样本外泛化能力有保障",
+        "流动性充足，日线数据无明显缺失，适合日频回测",
+        "覆盖期跨越牛熊转换，有助于评估策略在不同市场环境下的稳健性",
+    ]
+    for i, (sym, bars, days) in enumerate(symbols_found):
+        if bars < 60:
+            excluded.append({"symbol": sym, "reason": f"数据不足（{bars}根K线，低于60根最低要求），统计显著性不足"})
+        elif len(selected) < 20:
+            selected.append({"symbol": sym, "reason": reasons_select[i % len(reasons_select)]})
+        else:
+            excluded.append({"symbol": sym, "reason": "已达到目标标的数量上限（20个），数据质量达标但不在优先队列内"})
+
+    return {
+        "selected": selected,
+        "excluded": excluded,
+        "rationale": (
+            f"基于数据质量优先原则，从 {len(symbols_found)} 个可用标的中筛选出 {len(selected)} 个。"
+            "筛选标准：K线数量充足（≥60根）、覆盖时间跨度长、数据连续性强。"
+            "建议在每次回测前重新运行 Agent 构建，避免对固定标的集合过拟合。"
+        ),
+        "diversity_note": "当前为 Mock 模式（未配置真实 LLM），理由为模板生成。接入真实 AI 后将提供基于行业分散度、相关性分析的深度推荐。",
+    }
+
+
 _MOCK_METADATA: dict[str, Any] = {
     "name": "AI 价值精选 v1",
     "family": "value",
@@ -131,4 +176,6 @@ class MockLLMProvider(LLMProvider):
     ) -> dict[str, Any]:
         if _is_strategy_generation_spec_schema(output_schema):
             return json.loads(json.dumps(_MOCK_STRATEGY_SPEC))
+        if _is_universe_suggest_schema(output_schema):
+            return _mock_universe_response(prompt)
         return json.loads(json.dumps(_MOCK_METADATA))

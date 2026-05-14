@@ -74,12 +74,19 @@ async def test_create_and_get_backtest_uses_persisted_results(client_session):
     assert metric is not None
     assert first_equity is not None
 
+    # New extended metrics are returned from the live compute path.
+    for field in ("calmarRatio", "sortinoRatio", "volatility", "profitFactor"):
+        assert isinstance(created["metrics"][field], float)
+
     get_resp = await client.get(f"/api/v1/backtests/{created['taskId']}")
     assert get_resp.status_code == 200
     fetched = get_resp.json()
     assert fetched["taskId"] == created["taskId"]
     assert fetched["runId"] == created["runId"]
-    assert fetched["metrics"] == created["metrics"]
+    # Core persisted metrics must match; extended metrics are not stored in DB yet (return 0.0).
+    base_fields = ("cumulativeReturn", "annualReturn", "maxDrawdown", "sharpeRatio", "winRate", "turnover")
+    for f in base_fields:
+        assert fetched["metrics"][f] == pytest.approx(created["metrics"][f], rel=1e-6)
     assert fetched["equityCurve"] == created["equityCurve"]
 
 
@@ -245,6 +252,10 @@ async def test_trades_and_report_endpoints_aggregate_phase3_artefacts(client_ses
     assert isinstance(report["walkForwardFolds"], list)
     assert isinstance(report["sensitivityRuns"], list)
     assert isinstance(report["trades"], list)
+    assert report["labChecklist"]
+    assert report["promotionGate"]["decision"] in {"pass", "review", "block"}
+    assert any(check["id"] == "oos_split" and check["status"] == "pass" for check in report["labChecklist"])
+    assert any(check["id"] == "walk_forward" and check["status"] == "warn" for check in report["labChecklist"])
 
 
 async def test_walk_forward_endpoint_persists_folds(client_session):

@@ -1,9 +1,10 @@
 """Backtest Service API — backtest tasks, runs, reports, equity curves."""
 
+from datetime import date as _date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -16,13 +17,18 @@ from app.domains.backtest.models import (
     SensitivityRun as SensitivityRunModel,
     WalkForwardFold as WalkForwardFoldModel,
 )
-from app.domains.data.models import FeatureSet, FeatureUsage, LineageEdge
+from app.domains.data.models import FeatureSet, FeatureUsage, LineageEdge, MarketBarDaily
 from app.domains.backtest.schemas import (
     BacktestComparisonRow,
     BacktestCostIn,
     BacktestCreateIn,
+    UniverseCandidate,
+    UniverseSuggestIn,
+    UniverseSuggestOut,
     BacktestEquityPointOut,
+    BacktestLabCheckOut,
     BacktestMetricOut,
+    BacktestPromotionGateOut,
     BacktestReportOut,
     BacktestScreen,
     BacktestTaskListItem,
@@ -146,6 +152,212 @@ _HEATMAP = ParameterHeatmap(
     bestX=2,
     bestY=1,
 )
+
+
+_UNIVERSE_SUGGEST_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "selected": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["symbol", "reason"],
+            },
+        },
+        "excluded": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["symbol", "reason"],
+            },
+        },
+        "rationale": {"type": "string"},
+        "diversity_note": {"type": "string"},
+    },
+    "required": ["selected", "excluded", "rationale"],
+}
+
+_UNIVERSE_SYSTEM_PROMPT = """你是量化交易股票池构建（Universe Construction）专家助手。
+你的任务是从可用的市场数据标的中，根据量化策略类型筛选出最适合回测的标的池。
+
+核心原则：
+1. 避免过拟合：不要因为某标的历史表现好就选择它，要基于数据质量和策略适配性
+2. 数据完整性优先：K线数量多、连续性强的标的优于数据稀疏的标的
+3. 策略适配性：不同策略类型（趋势/动量/均值回归）对标的特征有不同偏好
+4. 多样性：避免过度集中在单一行业或相似特征的标的
+
+你必须返回严格的JSON格式，不得包含任何markdown或注释。"""
+
+
+@router.post("/universe/suggest", response_model=UniverseSuggestOut)
+async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> UniverseSuggestOut:
+    """AI-powered universe builder: calls the configured LLM to select and explain each symbol."""
+    from app.integrations.llm.factory import get_llm_provider
+
+    # ── Step 1: fetch all available symbols with stats ──
+    all_rows = (
+        await db.execute(
+            select(
+                MarketBarDaily.symbol,
+                func.count(MarketBarDaily.id).label("bars"),
+                func.min(MarketBarDaily.trade_date).label("start_date"),
+                func.max(MarketBarDaily.trade_date).label("end_date"),
+            )
+            .group_by(MarketBarDaily.symbol)
+            .order_by(func.count(MarketBarDaily.id).desc())
+        )
+    ).all()
+
+    if not all_rows:
+        return UniverseSuggestOut(
+            symbols=[],
+            candidates=[],
+            diversityScore=0.0,
+            coverageDays=0,
+            recommendation="本地无行情数据，请先通过「数据」模块导入市场数据。",
+        )
+
+    # ── Step 2: compute candidate metadata ──
+    candidates_raw = []
+    for row in all_rows:
+        try:
+            coverage = (_date.fromisoformat(row.end_date) - _date.fromisoformat(row.start_date)).days
+        except Exception:
+            coverage = row.bars
+        candidates_raw.append({
+            "symbol": row.symbol,
+            "bars": int(row.bars),
+            "start_date": row.start_date,
+            "end_date": row.end_date,
+            "coverage_days": coverage,
+        })
+
+    strategy_desc = {
+        "trend": "趋势跟踪（双均线）：偏好趋势明显、流动性高、数据连续的标的",
+        "momentum": "横截面动量：偏好相对强弱分化明显、覆盖期长的多标的池",
+        "mean_reversion": "均值回归：偏好波动性较高、均值回复特征明显的标的",
+    }.get(payload.strategy_family, f"量化策略（{payload.strategy_family}）")
+
+    # Limit context to avoid token overflow (send at most 60 symbols to LLM)
+    context_symbols = candidates_raw[:60]
+    symbol_table = "\n".join(
+        f"  {c['symbol']}: {c['bars']}根K线, {c['start_date']}~{c['end_date']}, 覆盖{c['coverage_days']}天"
+        for c in context_symbols
+    )
+    excluded_from_context = candidates_raw[60:]
+
+    prompt = f"""当前系统本地可用的市场行情数据如下（共{len(all_rows)}个标的，按K线数量降序）：
+
+{symbol_table}
+{"（另有 " + str(len(excluded_from_context)) + " 个数据极少的标的未展示）" if excluded_from_context else ""}
+
+策略构建需求：
+- 策略类型：{strategy_desc}
+- 最少K线要求：{payload.min_bars} 根（低于此值数据不足，不可用）
+- 目标标的数：{payload.max_symbols} 个
+- 多样性要求：{"是，避免过度集中" if payload.diversify else "否"}
+
+请从上述标的中选择最适合该策略的最多 {payload.max_symbols} 个标的。
+对每个选中的标的，给出1-2句选择理由（聚焦数据质量和策略适配性，不得基于历史收益）。
+对每个未选中但数据满足最少K线要求的标的，给出1句排除理由。
+最后给出整体股票池构建逻辑（2-3句）。"""
+
+    # ── Step 3: call LLM ──
+    llm_result: dict | None = None
+    ai_model: str | None = None
+    try:
+        provider = get_llm_provider()
+        raw = await provider.generate_structured(
+            prompt=prompt,
+            output_schema=_UNIVERSE_SUGGEST_SCHEMA,
+            system_prompt=_UNIVERSE_SYSTEM_PROMPT,
+            temperature=0.3,
+        )
+        llm_result = raw
+        ai_model = provider.model or provider.name
+    except Exception:
+        llm_result = None  # fall back to heuristic
+
+    # ── Step 4: merge LLM decisions with candidate metadata ──
+    symbol_map = {c["symbol"]: c for c in candidates_raw}
+    reason_map: dict[str, str] = {}
+    selected_symbols: list[str] = []
+
+    if llm_result and isinstance(llm_result.get("selected"), list):
+        for item in llm_result["selected"]:
+            sym = item.get("symbol", "")
+            if sym in symbol_map:
+                selected_symbols.append(sym)
+                reason_map[sym] = item.get("reason", "AI 推荐入选")
+        for item in (llm_result.get("excluded") or []):
+            sym = item.get("symbol", "")
+            if sym and sym not in reason_map:
+                reason_map[sym] = item.get("reason", "AI 未推荐")
+        ai_rationale = llm_result.get("rationale") or llm_result.get("diversity_note")
+    else:
+        # Heuristic fallback: select by bar count, skip below min_bars
+        for c in candidates_raw:
+            if c["bars"] >= payload.min_bars and len(selected_symbols) < payload.max_symbols:
+                selected_symbols.append(c["symbol"])
+                reason_map[c["symbol"]] = f"数据覆盖充足（{c['bars']}根K线，{c['coverage_days']}天）"
+            elif c["bars"] < payload.min_bars:
+                reason_map[c["symbol"]] = f"数据不足（{c['bars']}根 < 要求{payload.min_bars}根）"
+        ai_rationale = None
+        ai_model = None
+
+    selected_set = set(selected_symbols)
+    candidates: list[UniverseCandidate] = []
+    for c in candidates_raw:
+        candidates.append(UniverseCandidate(
+            symbol=c["symbol"],
+            bars=c["bars"],
+            startDate=c["start_date"],
+            endDate=c["end_date"],
+            coverageDays=c["coverage_days"],
+            selected=c["symbol"] in selected_set,
+            reason=reason_map.get(c["symbol"]),
+        ))
+
+    # ── Step 5: compute diversity score ──
+    n = len(selected_symbols)
+    if n > 0:
+        sel_candidates = [c for c in candidates if c.selected]
+        avg_bars = sum(c.bars for c in sel_candidates) / n
+        diversity_score = round(min(n / 20, 1.0) * 0.5 + min(avg_bars / 252, 1.0) * 0.5, 2)
+        try:
+            coverage_days = (
+                _date.fromisoformat(max(c.end_date for c in sel_candidates))
+                - _date.fromisoformat(min(c.start_date for c in sel_candidates))
+            ).days
+        except Exception:
+            coverage_days = int(avg_bars)
+    else:
+        diversity_score = 0.0
+        coverage_days = 0
+
+    rec = ai_rationale or (
+        "无可用标的，请先导入行情数据。" if n == 0 else
+        f"AI 推荐 {n} 个标的（数量偏少，建议导入更多品种以降低过拟合风险）。" if n < 5 else
+        f"AI 推荐 {n} 个标的，已按策略类型和数据质量综合筛选。"
+    )
+
+    return UniverseSuggestOut(
+        symbols=selected_symbols,
+        candidates=candidates,
+        diversityScore=diversity_score,
+        coverageDays=coverage_days,
+        recommendation=rec,
+        aiRationale=ai_rationale,
+        aiModel=ai_model,
+    )
 
 
 @router.get("/overview", response_model=BacktestScreen)
@@ -426,6 +638,7 @@ async def get_backtest_report(task_id: str, db: DbSession) -> BacktestReportOut:
     feature_rows: list[dict[str, str | None]] = []
     lineage_node_count = 0
     lineage_edge_count = 0
+    config_payload = _config_from_task(task)
 
     if run_id:
         fold_rows = (
@@ -529,6 +742,9 @@ async def get_backtest_report(task_id: str, db: DbSession) -> BacktestReportOut:
         lineage_edge_count = len(edge_rows)
         lineage_node_count = len({e.from_node_id for e in edge_rows} | {e.to_node_id for e in edge_rows})
 
+    lab_checklist = _lab_checklist(summary, config_payload, folds, sens, overfit, trades)
+    promotion_gate = _promotion_gate(lab_checklist)
+
     return BacktestReportOut(
         task_id=task_id,
         run_id=run_id,
@@ -540,6 +756,8 @@ async def get_backtest_report(task_id: str, db: DbSession) -> BacktestReportOut:
         feature_usage=feature_rows,
         lineage_node_count=lineage_node_count,
         lineage_edge_count=lineage_edge_count,
+        lab_checklist=lab_checklist,
+        promotion_gate=promotion_gate,
     )
 
 
@@ -572,14 +790,159 @@ async def get_overfit_assessment(task_id: str, db: DbSession) -> OverfitAssessme
 
 
 def _split_date_from_task(task: BacktestTask) -> str | None:
+    return _config_from_task(task).get("in_sample_end_date")
+
+
+def _config_from_task(task: BacktestTask) -> dict:
     import json as _json
 
     if not task.config:
-        return None
+        return {}
     try:
-        return _json.loads(task.config).get("in_sample_end_date")
+        payload = _json.loads(task.config)
     except Exception:  # noqa: BLE001
-        return None
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _lab_checklist(
+    summary: BacktestTaskResultOut,
+    config_payload: dict,
+    folds: list[WalkForwardFoldOut],
+    sensitivity_runs: list[SensitivityRunOut],
+    overfit: OverfitAssessmentOut | None,
+    trades: list[BacktestTradeOut],
+) -> list[BacktestLabCheckOut]:
+    """Translate raw artefacts into a research-readiness checklist.
+
+    This is intentionally computed, not persisted: it is product guidance over
+    immutable backtest artefacts, so thresholds can evolve without migrations.
+    """
+
+    metric = summary.metrics
+    equity_days = len(summary.equity_curve)
+    universe_size = len(config_payload.get("universe") or [])
+    cost_config = config_payload.get("cost_config") or {}
+
+    checks: list[BacktestLabCheckOut] = []
+    checks.append(
+        _check(
+            "data_coverage",
+            "数据覆盖",
+            "pass" if equity_days >= 120 and universe_size >= 5 else "warn",
+            f"{universe_size} 个标的，{equity_days} 个交易日；生产研究建议至少覆盖 5 个标的和 120 个交易日。",
+        )
+    )
+    checks.append(
+        _check(
+            "oos_split",
+            "样本外验证",
+            "pass" if summary.out_sample_metrics is not None else "fail",
+            "已配置 IS/OOS 切分。" if summary.out_sample_metrics is not None else "缺少样本外切分，无法判断策略是否只适配历史样本。",
+        )
+    )
+    checks.append(
+        _check(
+            "walk_forward",
+            "滚动验证",
+            "pass" if len(folds) >= 3 else "warn",
+            f"已完成 {len(folds)} 折 Walk-Forward；主流研究流程通常要求 3 折以上。",
+        )
+    )
+    variant_count = len([r for r in sensitivity_runs if not r.is_baseline])
+    checks.append(
+        _check(
+            "sensitivity",
+            "参数/成本敏感性",
+            "pass" if variant_count >= 3 else "warn",
+            f"已完成 {variant_count} 个扰动变体；需要观察参数、滑点变化后收益是否剧烈塌陷。",
+        )
+    )
+    checks.append(
+        _check(
+            "overfit",
+            "过拟合风险",
+            "pass" if overfit and overfit.level == "low" else "warn" if overfit and overfit.level == "medium" else "fail",
+            f"当前评分 {overfit.score}/100，等级 {overfit.level}。" if overfit else "尚未形成过拟合评分。",
+        )
+    )
+    if metric is None:
+        risk_status = "fail"
+        risk_detail = "缺少核心绩效指标。"
+    elif metric.sharpe_ratio >= 1 and metric.max_drawdown >= -0.2:
+        risk_status = "pass"
+        risk_detail = f"Sharpe {metric.sharpe_ratio:.2f}，最大回撤 {metric.max_drawdown:.1%}，满足基础风控门槛。"
+    elif metric.sharpe_ratio >= 0.5 and metric.max_drawdown >= -0.3:
+        risk_status = "warn"
+        risk_detail = f"Sharpe {metric.sharpe_ratio:.2f}，最大回撤 {metric.max_drawdown:.1%}，只适合继续研究。"
+    else:
+        risk_status = "fail"
+        risk_detail = f"Sharpe {metric.sharpe_ratio:.2f}，最大回撤 {metric.max_drawdown:.1%}，不应晋级。"
+    checks.append(_check("risk_reward", "收益风险比", risk_status, risk_detail))
+    checks.append(
+        _check(
+            "trade_evidence",
+            "交易证据",
+            "pass" if trades else "warn",
+            f"记录 {len(trades)} 笔模拟成交；可回放触发原因和成本。" if trades else "没有成交，收益曲线可能只是空仓现金曲线。",
+        )
+    )
+    zero_cost = all(float(cost_config.get(k, 0) or 0) == 0 for k in ("commission_rate", "stamp_tax_rate", "slippage_bps"))
+    checks.append(
+        _check(
+            "cost_model",
+            "成本假设",
+            "warn" if zero_cost else "pass",
+            "当前使用零交易成本，仅适合调试。" if zero_cost else "已计入佣金、印花税或滑点假设。",
+        )
+    )
+    return checks
+
+
+def _promotion_gate(checks: list[BacktestLabCheckOut]) -> BacktestPromotionGateOut:
+    hard_fail_ids = {"oos_split", "overfit", "risk_reward"}
+    hard_fails = [c for c in checks if c.status == "fail" and c.id in hard_fail_ids]
+    fails = [c for c in checks if c.status == "fail"]
+    warns = [c for c in checks if c.status == "warn"]
+    readiness_score = max(0, round(100 - len(fails) * 22 - len(warns) * 9))
+
+    if hard_fails:
+        decision = "block"
+        label = "禁止晋级"
+    elif fails or warns:
+        decision = "review"
+        label = "研究复核"
+    else:
+        decision = "pass"
+        label = "可进入模拟盘"
+
+    reasons = [f"{c.label}: {c.detail}" for c in hard_fails or fails or warns[:3]]
+    next_actions = _next_actions(checks)
+    return BacktestPromotionGateOut(
+        decision=decision,
+        label=label,
+        readiness_score=readiness_score,
+        reasons=reasons,
+        next_actions=next_actions,
+    )
+
+
+def _next_actions(checks: list[BacktestLabCheckOut]) -> list[str]:
+    suggestions = {
+        "data_coverage": "扩大股票池与历史区间，覆盖不同市场状态。",
+        "oos_split": "设置 IS/OOS 切分日，优先查看样本外收益和回撤。",
+        "walk_forward": "运行 Walk-Forward，确认滚动训练/测试窗口表现一致。",
+        "sensitivity": "运行敏感性扫描，检查参数和滑点扰动后的稳定性。",
+        "overfit": "降低参数自由度或补充样本外证据后重新评估。",
+        "risk_reward": "收紧仓位、止损或过滤条件，先把回撤和 Sharpe 拉回门槛。",
+        "trade_evidence": "检查策略信号是否产生真实成交，避免空仓曲线误判。",
+        "cost_model": "使用接近真实账户的佣金、印花税、滑点配置。",
+    }
+    return [suggestions[c.id] for c in checks if c.status != "pass" and c.id in suggestions][:4]
+
+
+def _check(id_: str, label: str, status: str, detail: str) -> BacktestLabCheckOut:
+    return BacktestLabCheckOut(id=id_, label=label, status=status, detail=detail)
 
 
 def _daily_backtest_config(payload: BacktestCreateIn) -> DailyBacktestConfig:
@@ -613,6 +976,10 @@ def _result_out(result) -> BacktestTaskResultOut:
             sharpe_ratio=m.sharpe_ratio,
             win_rate=m.win_rate,
             turnover=m.turnover,
+            calmar_ratio=getattr(m, "calmar_ratio", 0.0),
+            sortino_ratio=getattr(m, "sortino_ratio", 0.0),
+            volatility=getattr(m, "volatility", 0.0),
+            profit_factor=getattr(m, "profit_factor", 0.0),
         )
 
     split_date = result.in_sample_end_date
@@ -637,6 +1004,7 @@ def _result_out(result) -> BacktestTaskResultOut:
             )
             for point in result.equity_curve
         ],
+        monthly_returns=dict(result.monthly_returns),
     )
 
 
@@ -678,4 +1046,8 @@ def _metric_out(metric: BacktestMetric | None) -> BacktestMetricOut | None:
         sharpe_ratio=metric.sharpe_ratio or 0.0,
         win_rate=metric.win_rate or 0.0,
         turnover=metric.turnover or 0.0,
+        calmar_ratio=getattr(metric, "calmar_ratio", None) or 0.0,
+        sortino_ratio=getattr(metric, "sortino_ratio", None) or 0.0,
+        volatility=getattr(metric, "volatility", None) or 0.0,
+        profit_factor=getattr(metric, "profit_factor", None) or 0.0,
     )

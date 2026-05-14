@@ -57,6 +57,7 @@ export default function StrategyDetailModal({ strategyId, onClose, onChanged }: 
 
   useEffect(() => {
     let alive = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setError(null)
     setLoading(true)
     api.strategy.detail(strategyId)

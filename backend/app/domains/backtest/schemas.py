@@ -106,6 +106,7 @@ class BacktestCreateIn(BaseModel):
     start_date: str = Field(alias="startDate")
     end_date: str = Field(alias="endDate")
     strategy_name: str = Field(default="dual_ma", alias="strategyName")
+    strategy_id: str | None = Field(default=None, alias="strategyId")
     initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
     strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
     cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
@@ -117,6 +118,39 @@ class BacktestCreateIn(BaseModel):
     )
 
 
+class UniverseSuggestIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    strategy_family: str = Field(default="trend", alias="strategyFamily")
+    max_symbols: int = Field(default=20, alias="maxSymbols")
+    min_bars: int = Field(default=60, alias="minBars")
+    diversify: bool = True
+
+
+class UniverseCandidate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    symbol: str
+    bars: int
+    start_date: str = Field(alias="startDate")
+    end_date: str = Field(alias="endDate")
+    coverage_days: int = Field(alias="coverageDays")
+    selected: bool
+    reason: str | None = None  # AI-generated selection / exclusion reason
+
+
+class UniverseSuggestOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    symbols: list[str]
+    candidates: list[UniverseCandidate]
+    diversity_score: float = Field(alias="diversityScore")
+    coverage_days: int = Field(alias="coverageDays")
+    recommendation: str
+    ai_rationale: str | None = Field(default=None, alias="aiRationale")
+    ai_model: str | None = Field(default=None, alias="aiModel")
+
+
 class BacktestMetricOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -126,6 +160,10 @@ class BacktestMetricOut(BaseModel):
     sharpe_ratio: float = Field(alias="sharpeRatio")
     win_rate: float = Field(alias="winRate")
     turnover: float
+    calmar_ratio: float = Field(default=0.0, alias="calmarRatio")
+    sortino_ratio: float = Field(default=0.0, alias="sortinoRatio")
+    volatility: float = Field(default=0.0)
+    profit_factor: float = Field(default=0.0, alias="profitFactor")
 
 
 class BacktestEquityPointOut(BaseModel):
@@ -204,6 +242,27 @@ class BacktestReportOut(BaseModel):
     feature_usage: list[dict[str, str | None]] = Field(default_factory=list, alias="featureUsage")
     lineage_node_count: int = Field(default=0, alias="lineageNodeCount")
     lineage_edge_count: int = Field(default=0, alias="lineageEdgeCount")
+    lab_checklist: list["BacktestLabCheckOut"] = Field(default_factory=list, alias="labChecklist")
+    promotion_gate: "BacktestPromotionGateOut | None" = Field(default=None, alias="promotionGate")
+
+
+class BacktestLabCheckOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    label: str
+    status: str  # pass / warn / fail
+    detail: str
+
+
+class BacktestPromotionGateOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    decision: str  # pass / review / block
+    label: str
+    readiness_score: int = Field(alias="readinessScore")
+    reasons: list[str] = Field(default_factory=list)
+    next_actions: list[str] = Field(default_factory=list, alias="nextActions")
 
 
 class OverfitComponentOut(BaseModel):
@@ -286,3 +345,4 @@ class BacktestTaskResultOut(BaseModel):
     out_sample_metrics: BacktestMetricOut | None = Field(default=None, alias="outSampleMetrics")
     in_sample_end_date: str | None = Field(default=None, alias="inSampleEndDate")
     equity_curve: list[BacktestEquityPointOut] = Field(default_factory=list, alias="equityCurve")
+    monthly_returns: dict[str, float] = Field(default_factory=dict, alias="monthlyReturns")

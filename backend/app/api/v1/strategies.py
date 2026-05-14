@@ -359,6 +359,28 @@ async def get_strategy_feed(db: AsyncSession = Depends(get_db)) -> list[FeedEven
     return feed
 
 
+@router.get("/backtest-ready", response_model=StrategyListResponse)
+async def get_backtest_ready_strategies(
+    db: AsyncSession = Depends(get_db),
+) -> StrategyListResponse:
+    """Strategies that have passed initial review and are ready to be backtested.
+
+    Returns strategies in research / backtest / paper / live stages — these are
+    the only strategies that should be wired to the Backtest Lab. Draft strategies
+    are excluded because they haven't been reviewed yet.
+    """
+    ready_statuses = ["research", "backtest", "backtesting", "paper", "live"]
+    base = select(Strategy).where(
+        Strategy.deleted_at.is_(None),
+        Strategy.status.in_(ready_statuses),
+    )
+    total_row = await db.execute(select(func.count()).select_from(base.subquery()))
+    total = int(total_row.scalar() or 0)
+    rows = await db.execute(base.order_by(Strategy.updated_at.desc()).limit(100))
+    items = [_list_item(s) for s in rows.scalars().all()]
+    return StrategyListResponse(total=total, items=items)
+
+
 @router.get("", response_model=StrategyListResponse)
 @router.get("/", response_model=StrategyListResponse)
 async def list_strategies(

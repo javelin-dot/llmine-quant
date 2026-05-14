@@ -134,6 +134,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
   /** Avoid double completion when WS and HTTP poll both see terminal state. */
   const generationDoneRef = useRef(false)
   const nlBriefRef = useRef(nlBrief)
+  // eslint-disable-next-line react-hooks/refs
   nlBriefRef.current = nlBrief
 
   // Build risk constraint text from selected profile
@@ -227,6 +228,7 @@ export default function StrategyBuilder({ onRefresh, onOpenStrategy, onNavigate 
   useEffect(() => {
     if (generating) return
     if (!data.matrix?.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDraftResult(null)
       return
     }

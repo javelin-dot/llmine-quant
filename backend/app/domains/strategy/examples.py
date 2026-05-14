@@ -199,9 +199,143 @@ class DualMovingAverageStrategy(BaseStrategy):
         )
 
 
+class MomentumStrategy(BaseStrategy):
+    """Cross-sectional momentum: rank by recent N-day return, buy top performers."""
+
+    name = "momentum"
+    version = "0.1.0"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        p = params or {}
+        self.lookback: int = int(p.get("lookback", 20))
+        self.skip: int = int(p.get("skip", 1))
+        self.max_positions: int = int(p.get("max_positions", 5))
+        self.target_gross: float = float(p.get("target_gross", 0.95))
+
+    def initialize(self, context: StrategyContext) -> StrategyState:
+        return StrategyState(memory={"strategy": self.name, "lookback": self.lookback})
+
+    def generate_signals(
+        self,
+        context: StrategyContext,
+        bars: tuple[StrategyBar, ...],
+        state: StrategyState,
+    ) -> tuple[StrategySignal, ...]:
+        history = _history_by_symbol(bars, context.trade_date)
+        needed = self.lookback + self.skip + 1
+        signals: list[StrategySignal] = []
+        for symbol in context.universe:
+            sym_hist = history.get(symbol, [])
+            if len(sym_hist) < needed:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.1, reason="history too short"))
+                continue
+            latest = sym_hist[-1]
+            if latest.is_suspended:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.0, reason="suspended"))
+                continue
+            end_price = sym_hist[-(self.skip + 1)].valuation_price
+            start_price = sym_hist[-(self.lookback + self.skip + 1)].valuation_price if len(sym_hist) > self.lookback + self.skip else sym_hist[0].valuation_price
+            momentum = end_price / start_price - 1 if start_price > 0 else 0.0
+            signals.append(
+                StrategySignal(
+                    symbol=symbol,
+                    side=SignalSide.BUY if momentum > 0 and latest.can_buy else SignalSide.SELL,
+                    score=momentum,
+                    confidence=min(1.0, 0.5 + abs(momentum) * 3),
+                    reason=f"momentum {momentum:.3f} over {self.lookback}d",
+                )
+            )
+        return tuple(signals)
+
+    def rebalance(
+        self,
+        context: StrategyContext,
+        signals: tuple[StrategySignal, ...],
+        state: StrategyState,
+    ) -> RebalancePlan:
+        buys = sorted((s for s in signals if s.side == SignalSide.BUY), key=lambda s: s.score or 0.0, reverse=True)[: self.max_positions]
+        weight = self.target_gross / len(buys) if buys else 0.0
+        targets = tuple(TargetPosition(symbol=s.symbol, weight=weight, reason=s.reason) for s in buys)
+        used = sum(t.weight for t in targets)
+        return RebalancePlan(trade_date=context.trade_date, targets=targets, cash_weight=max(0.0, 1 - used))
+
+
+class MeanReversionStrategy(BaseStrategy):
+    """Short-term mean reversion: buy oversold symbols based on z-score of daily returns."""
+
+    name = "mean_reversion"
+    version = "0.1.0"
+
+    def __init__(self, params: dict[str, Any] | None = None) -> None:
+        p = params or {}
+        self.lookback: int = int(p.get("lookback", 20))
+        self.z_threshold: float = float(p.get("z_threshold", 1.5))
+        self.max_positions: int = int(p.get("max_positions", 10))
+        self.target_gross: float = float(p.get("target_gross", 0.90))
+
+    def initialize(self, context: StrategyContext) -> StrategyState:
+        return StrategyState(memory={"strategy": self.name})
+
+    def generate_signals(
+        self,
+        context: StrategyContext,
+        bars: tuple[StrategyBar, ...],
+        state: StrategyState,
+    ) -> tuple[StrategySignal, ...]:
+        import math as _math
+        history = _history_by_symbol(bars, context.trade_date)
+        signals: list[StrategySignal] = []
+        for symbol in context.universe:
+            sym_hist = history.get(symbol, [])
+            if len(sym_hist) < self.lookback + 1:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.1, reason="history too short"))
+                continue
+            latest = sym_hist[-1]
+            if latest.is_suspended:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.0, reason="suspended"))
+                continue
+            window = sym_hist[-(self.lookback + 1):]
+            prices = [b.valuation_price for b in window]
+            daily_rets = [prices[i] / prices[i - 1] - 1 for i in range(1, len(prices))]
+            if not daily_rets:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.1, reason="no returns"))
+                continue
+            mean = sum(daily_rets) / len(daily_rets)
+            var = sum((r - mean) ** 2 for r in daily_rets) / len(daily_rets)
+            std = _math.sqrt(var) if var > 0 else 0.0
+            today_ret = daily_rets[-1]
+            z = (today_ret - mean) / std if std > 0 else 0.0
+            if z < -self.z_threshold and latest.can_buy:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.BUY, score=-z, confidence=min(1.0, abs(z) / 3), reason=f"z={z:.2f} oversold"))
+            elif symbol in context.positions and z > self.z_threshold * 0.5:
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.SELL, score=z, confidence=0.6, target_weight=0.0, reason=f"z={z:.2f} recovered"))
+            else:
+                hold_w = context.positions[symbol].weight if symbol in context.positions else None
+                signals.append(StrategySignal(symbol=symbol, side=SignalSide.HOLD, confidence=0.3, target_weight=hold_w, reason=f"z={z:.2f} neutral"))
+        return tuple(signals)
+
+    def rebalance(
+        self,
+        context: StrategyContext,
+        signals: tuple[StrategySignal, ...],
+        state: StrategyState,
+    ) -> RebalancePlan:
+        hold_targets = [TargetPosition(symbol=s.symbol, weight=s.target_weight, reason=s.reason) for s in signals if s.side == SignalSide.HOLD and s.target_weight is not None and s.target_weight > 0]
+        hold_weight = sum(t.weight for t in hold_targets)
+        remaining = max(0.0, self.target_gross - hold_weight)
+        buys = sorted((s for s in signals if s.side == SignalSide.BUY), key=lambda s: s.score or 0.0, reverse=True)[: self.max_positions]
+        buy_w = remaining / len(buys) if buys else 0.0
+        buy_targets = [TargetPosition(symbol=s.symbol, weight=buy_w, reason=s.reason) for s in buys if buy_w > 0]
+        targets = tuple(hold_targets + buy_targets)
+        used = sum(t.weight for t in targets)
+        return RebalancePlan(trade_date=context.trade_date, targets=targets, cash_weight=max(0.0, 1 - used))
+
+
 BUILTIN_STRATEGIES: dict[str, type[BaseStrategy]] = {
     "dual_ma": DualMovingAverageStrategy,
     "dual-moving-average": DualMovingAverageStrategy,
+    "momentum": MomentumStrategy,
+    "mean_reversion": MeanReversionStrategy,
 }
 
 
@@ -212,6 +346,10 @@ def create_builtin_strategy(name: str, params: dict[str, Any] | None = None) -> 
         raise ValueError(f"unknown built-in strategy: {name}")
     if strategy_cls is DualMovingAverageStrategy:
         return DualMovingAverageStrategy(DualMovingAverageConfig.from_params(params or {}))
+    if strategy_cls is MomentumStrategy:
+        return MomentumStrategy(params)
+    if strategy_cls is MeanReversionStrategy:
+        return MeanReversionStrategy(params)
     return strategy_cls()
 
 

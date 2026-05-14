@@ -139,6 +139,10 @@ export interface BacktestMetricPayload {
   sharpeRatio: number
   winRate: number
   turnover: number
+  calmarRatio: number
+  sortinoRatio: number
+  volatility: number
+  profitFactor: number
 }
 
 export interface BacktestEquityPointPayload {
@@ -157,6 +161,7 @@ export interface BacktestTaskResult {
   outSampleMetrics: BacktestMetricPayload | null
   inSampleEndDate: string | null
   equityCurve: BacktestEquityPointPayload[]
+  monthlyReturns: Record<string, number>
 }
 
 export interface WalkForwardFoldPayload {
@@ -245,6 +250,23 @@ export interface BacktestReportPayload {
   featureUsage: { featureId: string; featureName: string; featureVersion: string; role: string | null }[]
   lineageNodeCount: number
   lineageEdgeCount: number
+  labChecklist: BacktestLabCheckPayload[]
+  promotionGate: BacktestPromotionGatePayload | null
+}
+
+export interface BacktestLabCheckPayload {
+  id: string
+  label: string
+  status: 'pass' | 'warn' | 'fail'
+  detail: string
+}
+
+export interface BacktestPromotionGatePayload {
+  decision: 'pass' | 'review' | 'block'
+  label: string
+  readinessScore: number
+  reasons: string[]
+  nextActions: string[]
 }
 
 export interface BacktestCreatePayload {
@@ -266,6 +288,50 @@ export interface BacktestCreatePayload {
 export interface WalkForwardCreatePayload extends BacktestCreatePayload {
   folds?: number
   trainRatio?: number
+}
+
+// ── Strategy Factory list item (for Backtest Lab strategy selector) ──────────
+export interface StrategyListItem {
+  id: string
+  name: string
+  family: string
+  type: string
+  status: string
+  riskProfile: string
+  market: string
+  sharpe: number | null
+  maxDd: number | null
+  annualReturn: number | null
+  oosScore: number | null
+  updatedAt: string
+}
+
+// ── Universe suggestion ───────────────────────────────────────────────────────
+export interface UniverseSuggestCriteria {
+  strategyFamily?: string
+  maxSymbols?: number
+  minBars?: number
+  diversify?: boolean
+}
+
+export interface UniverseCandidate {
+  symbol: string
+  bars: number
+  startDate: string
+  endDate: string
+  coverageDays: number
+  selected: boolean
+  reason: string | null  // AI-generated selection / exclusion reason
+}
+
+export interface UniverseSuggestResult {
+  symbols: string[]
+  candidates: UniverseCandidate[]
+  diversityScore: number
+  coverageDays: number
+  recommendation: string
+  aiRationale: string | null  // overall AI rationale
+  aiModel: string | null      // which model generated this
 }
 
 // ── Phase 4 paper-trading types ──────────────────────────────────────────
@@ -545,6 +611,8 @@ export const api = {
       putJson<StrategyDetail>(`/strategies/${encodeURIComponent(strategyId)}`, body),
     delete: (strategyId: string) =>
       deleteJson(`/strategies/${encodeURIComponent(strategyId)}`),
+    backtestReady: () =>
+      getJson<{ total: number; items: StrategyListItem[] }>('/strategies/backtest-ready', () => ({ total: 0, items: [] })),
   },
   backtest: {
     overview: () => getJson<MockData['backtest']>('/backtests/overview', () => mock.backtest),
@@ -588,6 +656,13 @@ export const api = {
       ),
     list: (limit = 20) =>
       getJson<BacktestTaskListPayload[]>(`/backtests/?limit=${limit}`, () => []),
+    suggestUniverse: (criteria: UniverseSuggestCriteria) =>
+      postJson<UniverseSuggestResult>('/backtests/universe/suggest', {
+        strategyFamily: criteria.strategyFamily ?? 'trend',
+        maxSymbols: criteria.maxSymbols ?? 20,
+        minBars: criteria.minBars ?? 60,
+        diversify: criteria.diversify ?? true,
+      }),
   },
   explain: {
     overview: () => getJson<MockData['explain']>('/explain/overview', () => mock.explain),

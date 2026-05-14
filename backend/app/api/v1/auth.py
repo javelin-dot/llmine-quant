@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth_deps import get_current_user
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.db.base_class import now_utc
@@ -182,15 +183,11 @@ async def logout(payload: RefreshRequest, db: DbSession) -> dict[str, str]:
 
 
 @router.get("/me")
-async def get_me(db: DbSession, authorization: str | None = None) -> dict:
-    """Return current user info from Bearer token."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
-    token = authorization[7:]
-    claims = decode_access_token(token)
-    if not claims:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user = (await db.execute(select(User).where(User.id == claims["sub"]))).scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    return {"user_id": user.id, "email": user.email, "name": user.name, "status": user.status}
+async def get_me(current_user: User = Depends(get_current_user)) -> dict:
+    """Return current user info from Bearer token (Authorization header)."""
+    return {
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "name": current_user.name,
+        "status": current_user.status,
+    }
