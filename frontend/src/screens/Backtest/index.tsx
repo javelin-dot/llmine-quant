@@ -452,7 +452,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
           </div>
 
           {/* Universe */}
-          <div className="bt-config-section">
+          <div className={`bt-config-section bt-universe-section ${universeMode === 'agent' ? 'agent-mode' : ''}`}>
             <div className="bt-label-row">
               <label className="bt-label">
                 股票池 <span className="bt-label-count">({config.universe.length})</span>

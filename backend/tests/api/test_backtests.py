@@ -290,6 +290,30 @@ async def test_walk_forward_endpoint_persists_folds(client_session):
     assert all("trainStart" in f and "testEnd" in f for f in body["folds"])
 
 
+async def test_universe_suggest_respects_min_bars_and_max_symbols(client_session):
+    client, session = client_session
+    await _seed_bars(session, "600519.SH", [10, 11, 12, 13, 14, 15, 16, 17])
+    await _seed_bars(session, "300750.SZ", [20, 21, 22, 23, 24, 25, 26])
+    await _seed_bars(session, "000333.SZ", [30, 31, 32, 33])
+
+    resp = await client.post(
+        "/api/v1/backtests/universe/suggest",
+        json={
+            "strategyFamily": "trend",
+            "minBars": 6,
+            "maxSymbols": 1,
+            "diversify": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["symbols"]) == 1
+    assert body["symbols"][0] in {"600519.SH", "300750.SZ"}
+    assert all(c["bars"] >= 6 for c in body["candidates"])
+    assert "000333.SZ" not in {c["symbol"] for c in body["candidates"]}
+
+
 async def test_create_backtest_rejects_invalid_in_sample_end_date(client_session):
     """API returns 400 when split date is outside the run range."""
     client, session = client_session

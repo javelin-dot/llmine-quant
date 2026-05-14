@@ -122,8 +122,8 @@ class UniverseSuggestIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     strategy_family: str = Field(default="trend", alias="strategyFamily")
-    max_symbols: int = Field(default=20, alias="maxSymbols")
-    min_bars: int = Field(default=60, alias="minBars")
+    max_symbols: int = Field(default=20, ge=1, le=200, alias="maxSymbols")
+    min_bars: int = Field(default=60, ge=1, alias="minBars")
     diversify: bool = True
 
 
