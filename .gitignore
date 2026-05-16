@@ -60,6 +60,10 @@ env/
 
 # Local SQLite dev database (see backend/.env.example)
 backend/dev.db
+# All SQLite database files should never be committed
+*.db
+# Stray file generated from a Windows-style absolute path being treated as a filename
+backend/D%3A%5CAI%5Ccode%5Cllmine-quant%5Cbackend%5Cdev.db
 
 # Environment and secrets (do not commit API keys)
 .env
