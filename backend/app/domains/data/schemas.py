@@ -40,15 +40,6 @@ class LatencyTrend(BaseModel):
     slaMs: int
 
 
-class BiasGate(BaseModel):
-    title: str
-    desc: str
-    status: str  # pass / watch / fail / enforced
-    statusTone: str
-    lastCheck: str
-    note: str
-
-
 class LineageNodeOut(BaseModel):
     id: str
     label: str
@@ -67,9 +58,26 @@ class SymbolSummary(BaseModel):
     """Summary row for a tradable symbol available in the local market_bars table."""
 
     symbol: str
+    name: str | None = None
     bars: int
     startDate: str
     endDate: str
+
+
+class SymbolStatsOut(BaseModel):
+    """Whole-database aggregate KPI for the Local Market Library."""
+
+    totalSymbols: int
+    totalBars: int
+    latestTradeDate: str | None = None
+    earliestTradeDate: str | None = None
+
+
+class StockInfoRefreshOut(BaseModel):
+    """Result of a manual ``stock_info`` refresh from AKShare snapshot."""
+
+    upserted: int
+    syncedAt: str
 
 
 class FeatureOut(BaseModel):
@@ -131,7 +139,6 @@ class DataScreen(BaseModel):
     kpis: list[dict[str, str]]
     sources: list[DataSourceOut]
     latencyTrend: LatencyTrend
-    biasGate: list[BiasGate]
     lineage: LineageOut
     incidents: list[DataIncidentOut]
 
@@ -166,6 +173,41 @@ class MarketDataImportSummary(BaseModel):
     start_date: str | None = Field(alias="startDate")
     end_date: str | None = Field(alias="endDate")
     errors: list[str]
+
+
+class MarketSyncStart(BaseModel):
+    """前端触发全市场同步的入参 (全部可选)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    start_date: str | None = Field(default=None, alias="startDate")
+    end_date: str | None = Field(default=None, alias="endDate")
+    adjust: str = "qfq"
+    concurrency: int = 8
+    boards: list[str] = Field(default_factory=list)
+    incremental: bool = True
+
+
+class MarketSyncStatus(BaseModel):
+    """前端轮询进度的出参."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    task_id: str | None = Field(default=None, alias="taskId")
+    phase: str
+    started_at: str | None = Field(default=None, alias="startedAt")
+    finished_at: str | None = Field(default=None, alias="finishedAt")
+    total: int
+    done: int
+    skipped: int
+    inserted_rows: int = Field(alias="insertedRows")
+    updated_rows: int = Field(alias="updatedRows")
+    failures: int
+    rate_per_sec: float = Field(alias="ratePerSec")
+    eta_seconds: float | None = Field(default=None, alias="etaSeconds")
+    last_symbol: str | None = Field(default=None, alias="lastSymbol")
+    error: str | None = None
+    is_running: bool = Field(alias="isRunning")
 
 
 class MarketBarDailyOut(BaseModel):

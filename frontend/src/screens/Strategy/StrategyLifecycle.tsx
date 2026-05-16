@@ -1,8 +1,11 @@
 import { useState, useMemo } from 'react'
+import { api } from '../../lib/api'
 import { useStrategy } from '../../contexts/StrategyContext'
 
 interface StrategyLifecycleProps {
   strategyId?: string | null
+  onNavigate?: (target: string) => void
+  onChanged?: () => void
 }
 
 const LIFECYCLE_STAGES = [
@@ -16,9 +19,23 @@ const LIFECYCLE_STAGES = [
   { key: 'archived', label: '归档', tone: 'gray' as const },
 ]
 
-export default function StrategyLifecycle({ strategyId }: StrategyLifecycleProps) {
+export default function StrategyLifecycle({ strategyId, onNavigate, onChanged }: StrategyLifecycleProps) {
   const data = useStrategy()
   const [expanded, setExpanded] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const advance = async (newStatus: string) => {
+    if (!strategyId || saving) return
+    setSaving(true)
+    try {
+      await api.strategy.update(strategyId, { status: newStatus })
+      onChanged?.()
+    } catch (e) {
+      console.error('lifecycle advance failed', e)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // Find the strategy's current stage from pipelineBoard
   const currentStage = useMemo(() => {
@@ -103,44 +120,76 @@ export default function StrategyLifecycle({ strategyId }: StrategyLifecycleProps
               <div className="lifecycle-next-buttons">
                 {currentStage === 'draft' && (
                   <>
-                    <button className="btn">开始研究</button>
-                    <button className="btn secondary">编辑草稿</button>
+                    <button className="btn" disabled={saving} onClick={() => void advance('research')}>
+                      {saving ? '处理中…' : '开始研究'}
+                    </button>
                   </>
                 )}
                 {currentStage === 'research' && (
                   <>
-                    <button className="btn">运行回测</button>
-                    <button className="btn secondary">优化信号</button>
+                    <button className="btn" disabled={saving} onClick={() => {
+                      onNavigate?.(`backtest:strategyId=${encodeURIComponent(strategyId)}`)
+                    }}>
+                      运行回测
+                    </button>
                   </>
                 )}
                 {currentStage === 'backtest' && (
                   <>
-                    <button className="btn">提交风控审查</button>
-                    <button className="btn secondary">查看回测报告</button>
+                    <button className="btn" disabled={saving} onClick={() => void advance('risk_review')}>
+                      {saving ? '处理中…' : '提交风控审查'}
+                    </button>
+                    <button className="btn secondary" onClick={() => {
+                      onNavigate?.(`backtest:strategyId=${encodeURIComponent(strategyId)}`)
+                    }}>
+                      查看回测报告
+                    </button>
                   </>
                 )}
                 {currentStage === 'risk_review' && (
                   <>
-                    <button className="btn">批准模拟盘</button>
-                    <button className="btn danger">驳回</button>
+                    <button className="btn" disabled={saving} onClick={async () => {
+                      await advance('paper')
+                      onNavigate?.('paper')
+                    }}>
+                      {saving ? '处理中…' : '批准→模拟盘'}
+                    </button>
+                    <button className="btn danger" disabled={saving} onClick={() => void advance('research')}>
+                      驳回
+                    </button>
                   </>
                 )}
                 {currentStage === 'paper' && (
                   <>
-                    <button className="btn">推送到实盘</button>
-                    <button className="btn secondary">查看模拟表现</button>
+                    <button className="btn" disabled={saving} onClick={async () => {
+                      await advance('live')
+                      onNavigate?.('execution')
+                    }}>
+                      {saving ? '处理中…' : '推送到实盘'}
+                    </button>
+                    <button className="btn secondary" onClick={() => onNavigate?.('paper')}>
+                      查看模拟表现
+                    </button>
                   </>
                 )}
                 {currentStage === 'live' && (
                   <>
-                    <button className="btn secondary">查看实盘监控</button>
-                    <button className="btn danger">暂停策略</button>
+                    <button className="btn secondary" onClick={() => onNavigate?.('execution')}>
+                      查看实盘审批
+                    </button>
+                    <button className="btn danger" disabled={saving} onClick={() => void advance('paused')}>
+                      {saving ? '处理中…' : '暂停策略'}
+                    </button>
                   </>
                 )}
                 {currentStage === 'monitor' && (
                   <>
-                    <button className="btn secondary">查看监控</button>
-                    <button className="btn">恢复</button>
+                    <button className="btn secondary" onClick={() => onNavigate?.('execution')}>
+                      查看监控
+                    </button>
+                    <button className="btn" disabled={saving} onClick={() => void advance('live')}>
+                      {saving ? '处理中…' : '恢复'}
+                    </button>
                   </>
                 )}
               </div>

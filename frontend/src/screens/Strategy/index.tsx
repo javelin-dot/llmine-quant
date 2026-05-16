@@ -29,7 +29,7 @@ function KpiCard({ label, value, tone = 'default', sub }: KpiCardProps) {
   )
 }
 
-export default function Strategy({ onNavigate }: StrategyProps) {
+export default function Strategy({ onNavigate, onModal }: StrategyProps) {
   const [data, setData] = useState<MockData['strategy'] | null>(null)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null)
@@ -95,6 +95,18 @@ export default function Strategy({ onNavigate }: StrategyProps) {
           </div>
           <div className="sf2-header-actions">
             <button
+              type="button"
+              className="command-palette sf2-command-palette"
+              aria-label="打开启动 AI 策略任务"
+              onClick={() => onModal?.('create')}
+            >
+              <span aria-hidden="true">⌕</span>
+              <span>Command Palette</span>
+              <kbd>⌘</kbd>
+              <kbd>K</kbd>
+            </button>
+            <button
+              type="button"
               className="sf2-btn-new"
               onClick={() => setDrawerOpen(true)}
             >
@@ -119,9 +131,10 @@ export default function Strategy({ onNavigate }: StrategyProps) {
           onNavigate={onNavigate}
           onOpenStrategy={handleOpenStrategy}
           highlightId={lastCreatedId}
+          onRefresh={refresh}
         />
 
-        <StrategyLifecycle strategyId={selectedStrategyId} />
+        <StrategyLifecycle strategyId={selectedStrategyId} onNavigate={onNavigate} onChanged={refresh} />
       </div>
 
       {/* Slide-in drawer for StrategyBuilder */}

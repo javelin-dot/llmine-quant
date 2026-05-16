@@ -11,6 +11,9 @@
 - `phase-3-reliability-explainability.md`：可靠性验证、过拟合检测、数据血缘与解释。
 - `phase-4-paper-trading.md`：模拟盘闭环。
 - `phase-5-live-readiness.md`：实盘前准备与安全审批。
+- `agent-studio-mvp-2026-05-16.md`：**Agent 模块真实可用 MVP 交付记录**，记录完整 Agent 配置、LangChain/LangGraph 运行时、工作流画布、契约校验、运行调试、发布版本等已完成内容。
+- `phase-agent-studio-ux.md`：**下一阶段计划**，聚焦 Agent 模块 UI、交互与用户易用性设计。
+- `agent-studio-ux-design-v1.md`：**Agent Studio UX v1 设计稿**，包含信息架构、对象关系、三页线框、四条核心用户流与实现优先级。
 - `gap-analysis.md`：**2026-05-13 全局差距分析**，从完整主流程出发列出 P0→P3 问题清单与文件定位。
 - `roadmap.md`：**对应 gap-analysis 的修复路线图**，按 Sprint 排列，含具体任务、文件和实现方案。
 
@@ -50,5 +53,7 @@ Phase 5  实盘前安全、审批、券商适配           [下一阶段]
 - **后端 Phase 3**：已完成。IS/OOS 切分、walk-forward、参数/滑点敏感性、过拟合评分、Feature Store、数据血缘、规则解释、统一报告 API 全部交付。后端 pytest 79 passed，live API 验证通过；前端 `api.ts` 已暴露新端点类型，`npx tsc -b --force` 与 `npm run build` 通过。
 - **后端 Phase 4**：已完成。7 张 `paper_*` 表 + `PaperTradingEngine`（信号 / pre-check / 当日收盘+动态滑点撮合 / 幂等 NAV / breach）+ `/paper/*` API + Celery beat (`15:30 Mon-Fri`)。后端 86 passed，frontend `npm run build` 通过，live API 跑通。
 - **Phase 5**：未开始。下一步进入实盘前安全审批：broker adapter / live order draft / 强制 HITL / 权限分级 / kill switch / 审计扩展 / paper↔live 对账 / 实盘前检查清单。
+- **Agent Studio MVP**：已完成真实可用前后端闭环。Agent 定义已支持完整配置；工作流已支持画布编排、节点 override、契约校验、LangChain/LangGraph 运行、调试执行、发布与不可变版本快照。
+- **当前用户指定优先级**：先暂停继续扩 Agent 后端能力，下一阶段转入 **Agent 模块 UI / 交互易用性设计**，目标是把“能用”提升为“好理解、好配置、少犯错、适合长期使用”。
 
 当前项目已有高保真前端、FastAPI API 骨架、策略任务和 Agent 任务表、真实数据回测链路。核心量化能力已从真实数据、真实回测开始补齐，当前重点是把 AI 策略生成与真实回测彻底闭环。

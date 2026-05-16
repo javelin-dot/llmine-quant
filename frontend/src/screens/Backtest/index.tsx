@@ -27,7 +27,7 @@ type ResultTab = 'overview' | 'monthly' | 'walk-forward' | 'sensitivity' | 'trad
 const STRATEGIES = [
   { value: 'dual_ma', label: '双均线', shortLabel: 'MA', family: 'trend' },
   { value: 'momentum', label: '横截面动量', shortLabel: 'MOM', family: 'momentum' },
-  { value: 'mean_reversion', label: '均值回归', shortLabel: 'REV', family: 'reversion' },
+  { value: 'mean_reversion', label: '均值回归', shortLabel: 'REV', family: 'mean_reversion' },
 ]
 
 interface ConfigState {
@@ -78,7 +78,7 @@ const DEFAULT_CONFIG: ConfigState = {
   slippageBps: 1,
 }
 
-function buildPayload(config: ConfigState): BacktestCreatePayload {
+function buildPayload(config: ConfigState, strategyId?: string | null): BacktestCreatePayload {
   const strategyParams: Record<string, number> =
     config.strategyName === 'dual_ma'
       ? { short_window: config.shortWindow, long_window: config.longWindow, target_gross: config.targetGross, max_positions: config.maxPositions }
@@ -93,6 +93,7 @@ function buildPayload(config: ConfigState): BacktestCreatePayload {
     inSampleEndDate: config.inSampleEndDate || undefined,
     initialCash: config.initialCash,
     strategyName: config.strategyName,
+    strategyId: strategyId || undefined,
     strategyParams,
     costConfig: {
       commissionRate: config.commissionRate,
@@ -134,7 +135,7 @@ const FAMILY_TO_ENGINE: Record<string, string> = {
   'multi-factor': 'momentum',
 }
 
-export default function Backtest({ initialStrategyId, initialTaskId }: BacktestProps) {
+export default function Backtest({ onNavigate, initialStrategyId, initialTaskId }: BacktestProps) {
   const [config, setConfig] = useState<ConfigState>(DEFAULT_CONFIG)
   const [symbols, setSymbols] = useState<SymbolSummary[]>([])
   const [history, setHistory] = useState<BacktestTaskListPayload[]>([])
@@ -157,8 +158,24 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
   const [universeMode, setUniverseMode] = useState<'manual' | 'agent'>('manual')
   const [agentBuilding, setAgentBuilding] = useState(false)
   const [agentSuggestion, setAgentSuggestion] = useState<UniverseSuggestResult | null>(null)
-  const [agentMinBars, setAgentMinBars] = useState(60)
+  // ── Three-step universe criteria ──
   const [agentMaxSymbols, setAgentMaxSymbols] = useState(20)
+  // Step 1 — liquidity
+  const [agentIndexPool, setAgentIndexPool] = useState<'csi300' | 'csi500' | 'csi1000' | 'both' | 'all'>('both')
+  const [agentBoards, setAgentBoards] = useState<('main' | 'star' | 'chinext' | 'bse')[]>([])
+  const [agentSectors, setAgentSectors] = useState<string[]>([])
+  const [sectorList, setSectorList] = useState<{ name: string; count: number }[]>([])
+  const [sectorSearch, setSectorSearch] = useState('')
+  const [sectorPickerOpen, setSectorPickerOpen] = useState(false)
+  const [agentMinBars, setAgentMinBars] = useState(60)
+  const [agentMinTurnoverYi, setAgentMinTurnoverYi] = useState(1) // 亿元
+  // Step 2 — volatility (annualized, %)
+  const [agentMinVolPct, setAgentMinVolPct] = useState(10)
+  const [agentMaxVolPct, setAgentMaxVolPct] = useState(80)
+  // Step 3 — momentum
+  const [agentMomentumDays, setAgentMomentumDays] = useState(60)
+  const [agentMinMomPct, setAgentMinMomPct] = useState(-20)
+  const [agentMaxMomPct, setAgentMaxMomPct] = useState(200)
   const resultPanelRef = useRef<HTMLElement | null>(null)
 
   const flash = (tone: 'green' | 'red' | 'blue', text: string, ms = 3500) => {
@@ -178,7 +195,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
   }, [])
 
   useEffect(() => {
-    void api.data.symbols().then((rows) => {
+    void api.data.symbols({ limit: 10000 }).then((rows) => {
       setSymbols(rows)
       if (rows.length && !config.startDate) {
         const cover = pickCoverage(rows)
@@ -190,7 +207,12 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
       }
     })
     void api.strategy.backtestReady().then((res) => {
-      setFactoryStrategies(res.items)
+      // Merge instead of replace — the initialStrategyId effect may have
+      // already prepended a freshly-fetched strategy that isn't in this list.
+      setFactoryStrategies((prev) => {
+        const seen = new Set(prev.map((s) => s.id))
+        return [...prev, ...res.items.filter((s) => !seen.has(s.id))]
+      })
     }).catch(() => { /* no factory strategies yet */ })
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshHistory()
@@ -206,6 +228,20 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
     flash('blue', `已选择策略工厂策略「${s.name}」→ 使用 ${engineName} 引擎`)
   }, [factoryStrategies])
 
+  // Lazy-load 申万 sector list the first time agent mode is opened.
+  useEffect(() => {
+    if (universeMode !== 'agent' || sectorList.length) return
+    void api.backtest.sectorList().then(setSectorList).catch(() => {})
+  }, [universeMode, sectorList.length])
+
+  const toggleBoard = useCallback((b: 'main' | 'star' | 'chinext' | 'bse') => {
+    setAgentBoards((prev) => prev.includes(b) ? prev.filter((x) => x !== b) : [...prev, b])
+  }, [])
+
+  const toggleSector = useCallback((name: string) => {
+    setAgentSectors((prev) => prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name])
+  }, [])
+
   const handleAgentBuild = useCallback(async () => {
     setAgentBuilding(true)
     try {
@@ -214,35 +250,76 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
       const result = await api.backtest.suggestUniverse({
         strategyFamily: engineFamily,
         maxSymbols: agentMaxSymbols,
-        minBars: agentMinBars,
         diversify: true,
+        indexPool: agentIndexPool,
+        boards: agentBoards,
+        sectors: agentSectors,
+        minBars: agentMinBars,
+        minAvgTurnoverCny: agentMinTurnoverYi * 1e8,
+        minVolatility: agentMinVolPct / 100,
+        maxVolatility: agentMaxVolPct / 100,
+        momentumWindowDays: agentMomentumDays,
+        minMomentum: agentMinMomPct / 100,
+        maxMomentum: agentMaxMomPct / 100,
       })
       setAgentSuggestion(result)
       setConfig((prev) => ({ ...prev, universe: result.symbols }))
-      flash('green', `Agent 推荐了 ${result.symbols.length} 个标的（多样性 ${Math.round(result.diversityScore * 100)}%）`)
+      if (result.symbols.length === 0) {
+        flash('red', result.recommendation || '三步筛选未保留任何标的，请放宽条件')
+      } else {
+        flash('green', `三步选股：保留 ${result.symbols.length} 个标的（多样性 ${Math.round(result.diversityScore * 100)}%）`)
+      }
     } catch (e) {
       flash('red', `Agent 构建失败: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setAgentBuilding(false)
     }
-  }, [config.strategyName, agentMaxSymbols, agentMinBars])
+  }, [
+    config.strategyName, agentMaxSymbols,
+    agentIndexPool, agentBoards, agentSectors,
+    agentMinBars, agentMinTurnoverYi,
+    agentMinVolPct, agentMaxVolPct,
+    agentMomentumDays, agentMinMomPct, agentMaxMomPct,
+  ])
 
   useEffect(() => {
-    if (!activeTaskId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setReport(null)
-      return
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReport(null)
+    if (!activeTaskId) return
     void api.backtest.report(activeTaskId).then(setReport).catch((e) => {
       setStatusMsg({ tone: 'red', text: `加载报告失败: ${e instanceof Error ? e.message : String(e)}` })
     })
   }, [activeTaskId])
 
   useEffect(() => {
-    if (initialStrategyId && !initialTaskId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!initialStrategyId || initialTaskId) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStrategySource('factory')
+    setSelectedFactoryId(initialStrategyId)
+    // Fetch detail so the strategy shows up in the selector even if it isn't
+    // yet in the backtest-ready list (e.g. just transitioned from draft), and
+    // so we can pre-pick the engine that matches its family.
+    void api.strategy.detail(initialStrategyId).then((d) => {
+      const engineName = FAMILY_TO_ENGINE[d.family.toLowerCase()] ?? 'dual_ma'
+      setConfig((prev) => ({ ...prev, strategyName: engineName }))
+      setFactoryStrategies((prev) => prev.some((s) => s.id === d.id) ? prev : [{
+        id: d.id,
+        name: d.name,
+        family: d.family,
+        type: 'unknown',
+        status: d.status,
+        riskProfile: d.riskProfile,
+        market: d.market,
+        sharpe: d.sharpe,
+        maxDd: d.maxDd,
+        annualReturn: d.annualReturn,
+        oosScore: d.oosScore,
+        updatedAt: d.updatedAt,
+      }, ...prev])
+      setStatusMsg({ tone: 'blue', text: `已选中「${d.name}」（${engineName} 引擎），完善股票池/区间后点击"运行回测"。` })
+    }).catch(() => {
       setStatusMsg({ tone: 'blue', text: `已为策略 ${initialStrategyId.slice(0, 8)}… 准备配置，按"运行回测"开始。` })
-    }
+    })
   }, [initialStrategyId, initialTaskId])
 
   useEffect(() => {
@@ -270,7 +347,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
     if (err) { flash('red', err); return }
     setRunning('backtest'); setStatusMsg(null)
     try {
-      const result = await api.backtest.runReal(buildPayload(config))
+      const result = await api.backtest.runReal(buildPayload(config, selectedFactoryId))
       setActiveTaskId(result.taskId)
       await refreshHistory()
       flash('green', `回测完成，task=${result.taskId.slice(0, 8)}…`)
@@ -284,7 +361,11 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
     if (err) { flash('red', err); return }
     setRunning('walk-forward')
     try {
-      const result = await api.backtest.walkForward({ ...buildPayload(config), folds: 4, trainRatio: 0.7 })
+      const result = await api.backtest.walkForward({
+        ...buildPayload(config, selectedFactoryId),
+        folds: 4,
+        trainRatio: 0.7,
+      })
       setActiveTaskId(result.taskId)
       await refreshHistory()
       flash('green', `Walk-Forward 完成 (${result.folds.length} 折)`)
@@ -294,12 +375,11 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
   }
 
   const runSensitivity = async () => {
-    if (!activeTaskId) { flash('blue', '先运行一次回测，再做敏感性扫描'); return }
     const err = validate()
     if (err) { flash('red', err); return }
     setRunning('sensitivity')
     try {
-      const result = await api.backtest.sensitivity(buildPayload(config))
+      const result = await api.backtest.sensitivity(buildPayload(config, selectedFactoryId))
       setActiveTaskId(result.taskId)
       await refreshHistory()
       flash('green', `敏感性扫描完成 (${result.runs.length} 变体)`)
@@ -373,7 +453,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
               <div className="bt-source-toggle">
                 <button
                   className={`bt-source-btn ${strategySource === 'builtin' ? 'on' : ''}`}
-                  onClick={() => setStrategySource('builtin')}
+                  onClick={() => { setStrategySource('builtin'); setSelectedFactoryId(null) }}
                 >内置策略</button>
                 <button
                   className={`bt-source-btn ${strategySource === 'factory' ? 'on' : ''}`}
@@ -471,27 +551,220 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
 
             {universeMode === 'agent' && (
               <div className="bt-agent-builder">
-                <div className="bt-agent-criteria">
-                  <label className="bt-field">
-                    <span>最少 K 线</span>
-                    <input
-                      type="number"
-                      className="bt-input small"
-                      value={agentMinBars}
-                      min={20}
-                      max={500}
-                      step={20}
-                      onChange={(e) => setAgentMinBars(Number(e.target.value))}
-                    />
-                  </label>
+                <div className="bt-step-block">
+                  <div className="bt-step-head">
+                    <span className="bt-step-num">①</span>
+                    <span className="bt-step-title">流动性筛选</span>
+                    <span className="bt-step-hint">指数池 / 数据深度 / 日均成交额</span>
+                  </div>
+                  <div className="bt-agent-criteria">
+                    <label className="bt-field">
+                      <span>指数池</span>
+                      <select
+                        className="bt-input small"
+                        value={agentIndexPool}
+                        onChange={(e) => setAgentIndexPool(e.target.value as 'csi300' | 'csi500' | 'csi1000' | 'both' | 'all')}
+                      >
+                        <option value="all">全部 A 股（约 5000 只）</option>
+                        <option value="both">沪深300 + 中证500（约 800 只）</option>
+                        <option value="csi300">沪深300（大盘 300 只）</option>
+                        <option value="csi500">中证500（中盘 500 只）</option>
+                        <option value="csi1000">中证1000（小盘 1000 只）</option>
+                      </select>
+                    </label>
+                    <label className="bt-field">
+                      <span>最少 K 线</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMinBars}
+                        min={20}
+                        max={1000}
+                        step={20}
+                        onChange={(e) => setAgentMinBars(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="bt-field">
+                      <span>日均成交额 ≥ (亿)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMinTurnoverYi}
+                        min={0}
+                        step={0.5}
+                        onChange={(e) => setAgentMinTurnoverYi(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Sub-filter 1A: 市场板块 (exchange-board) */}
+                  <div className="bt-substep-row">
+                    <div className="bt-substep-label">市场板块</div>
+                    <div className="bt-substep-chips">
+                      {([
+                        { key: 'main' as const, label: '主板' },
+                        { key: 'star' as const, label: '科创板' },
+                        { key: 'chinext' as const, label: '创业板' },
+                        { key: 'bse' as const, label: '北证' },
+                      ]).map((b) => (
+                        <button
+                          key={b.key}
+                          className={`bt-board-chip ${agentBoards.includes(b.key) ? 'on' : ''}`}
+                          onClick={() => toggleBoard(b.key)}
+                        >{b.label}</button>
+                      ))}
+                      {agentBoards.length > 0 && (
+                        <button className="bt-chip-btn" onClick={() => setAgentBoards([])}>清空</button>
+                      )}
+                      <span className="bt-substep-hint">
+                        {agentBoards.length === 0 ? '不限' : `${agentBoards.length} 个板块`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Sub-filter 1B: 行业板块 (申万行业) */}
+                  <div className="bt-substep-row">
+                    <div className="bt-substep-label">行业板块</div>
+                    <div className="bt-substep-chips">
+                      {agentSectors.length === 0 ? (
+                        <span className="bt-substep-empty">不限</span>
+                      ) : agentSectors.map((s) => (
+                        <button
+                          key={s}
+                          className="bt-sector-chip on"
+                          onClick={() => toggleSector(s)}
+                        >{s} <span className="bt-sector-chip-x">×</span></button>
+                      ))}
+                      <button
+                        className="bt-chip-btn"
+                        onClick={() => setSectorPickerOpen((v) => !v)}
+                      >{sectorPickerOpen ? '收起' : `＋ 选择行业 (${sectorList.length})`}</button>
+                      {agentSectors.length > 0 && (
+                        <button className="bt-chip-btn" onClick={() => setAgentSectors([])}>清空</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {sectorPickerOpen && (
+                    <div className="bt-sector-picker">
+                      <input
+                        type="text"
+                        className="bt-input small bt-sector-search"
+                        placeholder="搜索行业，如：半导体 / 医药 …"
+                        value={sectorSearch}
+                        onChange={(e) => setSectorSearch(e.target.value)}
+                      />
+                      <div className="bt-sector-grid">
+                        {sectorList.length === 0 ? (
+                          <div className="bt-empty-line">行业列表加载中或不可用</div>
+                        ) : sectorList
+                          .filter((s) => !sectorSearch || s.name.includes(sectorSearch))
+                          .slice(0, 120)
+                          .map((s) => (
+                            <button
+                              key={s.name}
+                              className={`bt-sector-grid-item ${agentSectors.includes(s.name) ? 'on' : ''}`}
+                              onClick={() => toggleSector(s.name)}
+                              title={`${s.count} 只成分股`}
+                            >
+                              <span>{s.name}</span>
+                              <span className="bt-sector-grid-count">{s.count}</span>
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bt-step-block">
+                  <div className="bt-step-head">
+                    <span className="bt-step-num">②</span>
+                    <span className="bt-step-title">波动率筛选</span>
+                    <span className="bt-step-hint">年化波动率区间（%）</span>
+                  </div>
+                  <div className="bt-agent-criteria">
+                    <label className="bt-field">
+                      <span>波动率 ≥ (%)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMinVolPct}
+                        min={0}
+                        max={500}
+                        step={5}
+                        onChange={(e) => setAgentMinVolPct(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="bt-field">
+                      <span>波动率 ≤ (%)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMaxVolPct}
+                        min={0}
+                        max={500}
+                        step={5}
+                        onChange={(e) => setAgentMaxVolPct(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="bt-step-block">
+                  <div className="bt-step-head">
+                    <span className="bt-step-num">③</span>
+                    <span className="bt-step-title">动量筛选</span>
+                    <span className="bt-step-hint">回看窗口与累计涨跌幅区间（%）</span>
+                  </div>
+                  <div className="bt-agent-criteria">
+                    <label className="bt-field">
+                      <span>动量窗口 (天)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMomentumDays}
+                        min={5}
+                        max={500}
+                        step={10}
+                        onChange={(e) => setAgentMomentumDays(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="bt-field">
+                      <span>累计涨跌 ≥ (%)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMinMomPct}
+                        min={-100}
+                        max={1000}
+                        step={5}
+                        onChange={(e) => setAgentMinMomPct(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="bt-field">
+                      <span>累计涨跌 ≤ (%)</span>
+                      <input
+                        type="number"
+                        className="bt-input small"
+                        value={agentMaxMomPct}
+                        min={-100}
+                        max={1000}
+                        step={10}
+                        onChange={(e) => setAgentMaxMomPct(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="bt-agent-criteria bt-agent-run-row">
                   <label className="bt-field">
                     <span>最大标的数</span>
                     <input
                       type="number"
                       className="bt-input small"
                       value={agentMaxSymbols}
-                      min={5}
-                      max={100}
+                      min={1}
+                      max={200}
                       step={5}
                       onChange={(e) => setAgentMaxSymbols(Number(e.target.value))}
                     />
@@ -501,7 +774,7 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                     disabled={agentBuilding}
                     onClick={() => void handleAgentBuild()}
                   >
-                    {agentBuilding ? <><span className="bt-spinner" /> 生成中…</> : '⊕ 生成推荐'}
+                    {agentBuilding ? <><span className="bt-spinner" /> 生成中…</> : '⊕ 按三步选股法生成'}
                   </button>
                 </div>
 
@@ -511,18 +784,26 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                     <div className="bt-agent-summary-row">
                       <div className="bt-agent-stats">
                         <span className="bt-agent-stat">
-                          <span className="bt-agent-stat-label">推荐入选</span>
-                          <span className="bt-agent-stat-value">{agentSuggestion.symbols.length}</span>
+                          <span className="bt-agent-stat-label">原始池</span>
+                          <span className="bt-agent-stat-value">{agentSuggestion.totalPool ?? agentSuggestion.candidates.length}</span>
+                        </span>
+                        <span className="bt-agent-stat">
+                          <span className="bt-agent-stat-label">通过三步</span>
+                          <span className="bt-agent-stat-value">{agentSuggestion.totalEligible ?? agentSuggestion.symbols.length}</span>
+                        </span>
+                        <span className="bt-agent-stat">
+                          <span className="bt-agent-stat-label">被剔除</span>
+                          <span className="bt-agent-stat-value neg">{agentSuggestion.totalRejected ?? 0}</span>
+                        </span>
+                        <span className="bt-agent-stat">
+                          <span className="bt-agent-stat-label">AI 入选</span>
+                          <span className="bt-agent-stat-value pos">{agentSuggestion.symbols.length}</span>
                         </span>
                         <span className="bt-agent-stat">
                           <span className="bt-agent-stat-label">当前已选</span>
                           <span className={`bt-agent-stat-value ${config.universe.length !== agentSuggestion.symbols.length ? 'mid' : 'pos'}`}>
                             {config.universe.length}
                           </span>
-                        </span>
-                        <span className="bt-agent-stat">
-                          <span className="bt-agent-stat-label">全部候选</span>
-                          <span className="bt-agent-stat-value">{agentSuggestion.candidates.length}</span>
                         </span>
                         <span className="bt-agent-stat">
                           <span className="bt-agent-stat-label">覆盖度</span>
@@ -535,7 +816,15 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                           <span className="bt-agent-stat-value">{agentSuggestion.coverageDays}d</span>
                         </span>
                       </div>
-                      <div className="bt-agent-rec">{agentSuggestion.recommendation}</div>
+                      <div className="bt-agent-rec">
+                        {agentSuggestion.recommendation}
+                        {agentSuggestion.symbols.length === 0 && (
+                          <button
+                            className="bt-agent-rec-cta"
+                            onClick={() => onNavigate?.('data')}
+                          >→ 去「行情与合规」导入行情</button>
+                        )}
+                      </div>
                     </div>
 
                     {/* AI model attribution */}
@@ -550,11 +839,18 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                     <div className="bt-agent-candidate-header">
                       <span className="bt-agent-candidate-label">
                         逐标的明细
-                        <span className="bt-agent-candidate-hint">·  点击行切换入选 / 排除</span>
+                        {(() => {
+                          const eligibleVisible = agentSuggestion.candidates.filter((c) => !c.dropReason).length
+                          const droppedVisible = agentSuggestion.candidates.length - eligibleVisible
+                          if (eligibleVisible === 0 && droppedVisible > 0) {
+                            return <span className="bt-agent-candidate-hint">·  所有可见行均被三步过滤剔除（⊘ 不可入选），按上方瓶颈提示调阈值</span>
+                          }
+                          return <span className="bt-agent-candidate-hint">·  点击未被剔除的行切换入选 / 排除（⊘ 行不可选）</span>
+                        })()}
                       </span>
                       <div className="bt-agent-bulk-actions">
                         <button className="bt-chip-btn" onClick={() => setConfig((p) => ({ ...p, universe: agentSuggestion.symbols }))}>恢复推荐</button>
-                        <button className="bt-chip-btn" onClick={() => setConfig((p) => ({ ...p, universe: agentSuggestion.candidates.map((c) => c.symbol) }))}>全选</button>
+                        <button className="bt-chip-btn" onClick={() => setConfig((p) => ({ ...p, universe: agentSuggestion.candidates.filter((c) => !c.dropReason).map((c) => c.symbol) }))}>全选可入</button>
                         <button className="bt-chip-btn" onClick={() => setConfig((p) => ({ ...p, universe: [] }))}>清空</button>
                       </div>
                     </div>
@@ -564,28 +860,37 @@ export default function Backtest({ initialStrategyId, initialTaskId }: BacktestP
                         <span className="bt-ath-symbol">代码</span>
                         <span className="bt-ath-name">名称</span>
                         <span className="bt-ath-bars">K线</span>
-                        <span className="bt-ath-range">数据区间</span>
-                        <span className="bt-ath-days">覆盖</span>
-                        <span className="bt-ath-reason">AI 选择理由</span>
+                        <span className="bt-ath-turnover">日均成交</span>
+                        <span className="bt-ath-vol">年化波动</span>
+                        <span className="bt-ath-mom">动量</span>
+                        <span className="bt-ath-reason">AI 选择 / 排除理由</span>
                       </div>
                       {agentSuggestion.candidates.map((c) => {
                         const isSelected = config.universe.includes(c.symbol)
                         const wasRecommended = agentSuggestion.symbols.includes(c.symbol)
-                        const stateClass = isSelected ? 'on' : wasRecommended ? 'deselected' : 'off'
+                        const isDropped = !!c.dropReason
+                        const stateClass = isDropped ? 'dropped' : isSelected ? 'on' : wasRecommended ? 'deselected' : 'off'
                         return (
                           <div
                             key={c.symbol}
                             className={`bt-agent-table-row ${stateClass}`}
-                            onClick={() => toggleSymbol(c.symbol)}
+                            onClick={() => { if (!isDropped) toggleSymbol(c.symbol) }}
                           >
                             <span className={`bt-atr-status ${stateClass}`}>
-                              {isSelected ? '✓' : wasRecommended ? '✕' : '○'}
+                              {isDropped ? '⊘' : isSelected ? '✓' : wasRecommended ? '✕' : '○'}
                             </span>
                             <span className="bt-atr-symbol">{c.symbol}</span>
                             <span className="bt-atr-name">{c.name ?? '—'}</span>
                             <span className="bt-atr-bars">{c.bars}</span>
-                            <span className="bt-atr-range">{c.startDate.slice(0, 7)} ~ {c.endDate.slice(0, 7)}</span>
-                            <span className="bt-atr-days">{c.coverageDays}d</span>
+                            <span className="bt-atr-turnover">
+                              {c.avgTurnover != null ? `${(c.avgTurnover / 1e8).toFixed(2)}亿` : '—'}
+                            </span>
+                            <span className="bt-atr-vol">
+                              {c.volatility != null ? `${(c.volatility * 100).toFixed(1)}%` : '—'}
+                            </span>
+                            <span className={`bt-atr-mom ${c.momentum != null && c.momentum >= 0 ? 'pos' : 'neg'}`}>
+                              {c.momentum != null ? `${c.momentum >= 0 ? '+' : ''}${(c.momentum * 100).toFixed(1)}%` : '—'}
+                            </span>
                             <span className="bt-atr-reason">
                               {c.reason ?? <span className="bt-atr-no-reason">—</span>}
                             </span>

@@ -24,6 +24,12 @@ dependencies = [
     "prometheus-client>=0.21.0",
     "celery>=5.4.0",
     "redis>=5.0.0",
+    "langchain>=1.0.0",
+    "langgraph>=1.0.0",
+    "langchain-openai>=1.0.0",
+    "langchain-anthropic>=1.0.0",
+    "python-multipart>=0.0.20",
+    "jsonschema>=4.23.0",
 ]
 
 [project.optional-dependencies]

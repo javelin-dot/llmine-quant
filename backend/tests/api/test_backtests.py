@@ -303,6 +303,15 @@ async def test_universe_suggest_respects_min_bars_and_max_symbols(client_session
             "minBars": 6,
             "maxSymbols": 1,
             "diversify": True,
+            # Relax three-step thresholds so the test fixtures (low turnover,
+            # synthetic prices) survive the liquidity / volatility / momentum
+            # filters.
+            "minAvgTurnoverCny": 0,
+            "minVolatility": 0,
+            "maxVolatility": 5,
+            "minMomentum": -1,
+            "maxMomentum": 10,
+            "momentumWindowDays": 5,
         },
     )
 
@@ -310,8 +319,10 @@ async def test_universe_suggest_respects_min_bars_and_max_symbols(client_session
     body = resp.json()
     assert len(body["symbols"]) == 1
     assert body["symbols"][0] in {"600519.SH", "300750.SZ"}
-    assert all(c["bars"] >= 6 for c in body["candidates"])
-    assert "000333.SZ" not in {c["symbol"] for c in body["candidates"]}
+    selected_codes = {c["symbol"] for c in body["candidates"] if c["selected"]}
+    assert selected_codes <= {"600519.SH", "300750.SZ"}
+    # 000333.SZ has fewer bars than minBars=6 → must not be selected.
+    assert "000333.SZ" not in selected_codes
 
 
 async def test_create_backtest_rejects_invalid_in_sample_end_date(client_session):

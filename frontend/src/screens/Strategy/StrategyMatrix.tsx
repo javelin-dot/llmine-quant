@@ -81,9 +81,10 @@ interface StrategyMatrixProps {
   onNavigate?: (target: string) => void
   onOpenStrategy?: (id: string) => void
   highlightId?: string | null
+  onRefresh?: () => void
 }
 
-export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId }: StrategyMatrixProps) {
+export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId, onRefresh }: StrategyMatrixProps) {
   const data = useStrategy()
   const [stageFilter, setStageFilter] = useState<StageKey>('all')
   const [familyFilter, setFamilyFilter] = useState('all')
@@ -107,23 +108,49 @@ export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId
     setOpenMenuId(null)
     if (pendingAction) return
     if (action === '打开') { onOpenStrategy?.(rowId); return }
-    if (action === '运行回测') {
-      onNavigate?.(`backtest:strategyId=${encodeURIComponent(rowId)}`)
-      return
-    }
     setPendingAction({ rowId, action })
     try {
-      if (action === '推送模拟盘') {
-        await api.strategy.update(rowId, { status: 'paper' })
-        showToast('green', '已推送至模拟盘')
+      if (action === '开始研究') {
+        await api.strategy.update(rowId, { status: 'research' })
+        onRefresh?.()
+        showToast('green', '已进入研究阶段，可运行回测')
+      } else if (action === '运行回测') {
+        // Draft strategies aren't visible to the backtest lab until they're in
+        // research+ status, so auto-promote drafts before navigating.
+        const row = data.matrix.find((m) => m.id === rowId)
+        if (row && row.status === 'draft') {
+          await api.strategy.update(rowId, { status: 'research' })
+          onRefresh?.()
+        }
+        onNavigate?.(`backtest:strategyId=${encodeURIComponent(rowId)}`)
+      } else if (action === '推送模拟盘') {
+        const detail = await api.strategy.detail(rowId).catch(() => null)
+        const market = detail?.market ?? 'A'
+        const baseCurrency = market === 'crypto' ? 'USDT' : 'CNY'
+        const name = detail?.name ?? rowId.slice(0, 8)
+        const account = await api.paper.createAccount({
+          name: `${name} · 模拟盘`,
+          strategyId: rowId,
+          market,
+          baseCurrency,
+          initialCash: 1_000_000,
+        })
+        await api.strategy.update(rowId, { status: 'paper' }).catch(() => null)
+        onRefresh?.()
+        showToast('green', `已创建模拟账户「${account.name}」`)
+        setTimeout(() => onNavigate?.(`paper:accountId=${encodeURIComponent(account.id)}`), 800)
       } else if (action === '部署实盘') {
         await api.strategy.update(rowId, { status: 'live' })
+        onRefresh?.()
         showToast('green', '已部署到实盘（需审批）')
+        setTimeout(() => onNavigate?.('execution'), 1200)
       } else if (action === '暂停') {
         await api.strategy.update(rowId, { status: 'paused' })
+        onRefresh?.()
         showToast('blue', '策略已暂停')
       } else if (action === '恢复') {
         await api.strategy.update(rowId, { status: 'live' })
+        onRefresh?.()
         showToast('green', '策略已恢复')
       }
     } catch (err) {
@@ -189,7 +216,8 @@ export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId
 
   const getPrimaryAction = (status: string) => {
     switch (status) {
-      case 'draft': return '运行回测'
+      case 'draft': return '开始研究'
+      case 'research': return '运行回测'
       case 'backtest': case 'backtesting': return '推送模拟盘'
       case 'paper': return '部署实盘'
       case 'live': return '暂停'
@@ -199,20 +227,15 @@ export default function StrategyMatrix({ onNavigate, onOpenStrategy, highlightId
   }
 
   const getMenuActions = (status: string) => {
-    const all = ['打开', '运行回测', '推送模拟盘', '部署实盘', '暂停', '恢复']
-    const primary = getPrimaryAction(status)
-    return all.filter((a) => {
-      if (a === '打开') return false
-      if (a === primary) return false
-      switch (status) {
-        case 'draft': return ['运行回测'].includes(a)
-        case 'backtest': case 'backtesting': return ['运行回测', '推送模拟盘'].includes(a) && a !== primary
-        case 'paper': return ['部署实盘', '暂停'].includes(a) && a !== primary
-        case 'live': return ['暂停'].includes(a) && a !== primary
-        case 'paused': return ['恢复'].includes(a) && a !== primary
-        default: return false
-      }
-    })
+    switch (status) {
+      case 'draft': return ['运行回测']
+      case 'research': return ['推送模拟盘']
+      case 'backtest': case 'backtesting': return ['运行回测']
+      case 'paper': return ['暂停']
+      case 'live': return []
+      case 'paused': return []
+      default: return []
+    }
   }
 
   const handleStageChange = (key: StageKey) => {

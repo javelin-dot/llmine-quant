@@ -75,3 +75,112 @@ class AgentMessageCreate(BaseModel):
     topic: str
     payload: dict
     correlation_id: str | None = None
+
+
+class AgentDefinitionBase(BaseModel):
+    name: str
+    role: str
+    avatar: str = "A"
+    description: str = ""
+    objective: str = ""
+    downstreamHint: str = ""
+    autonomy: str = "supervised"
+    status: str = "active"
+    modelConfig: dict
+    systemPrompt: str
+    userPromptTemplate: str
+    inputSchema: dict
+    outputSchema: dict
+    normalizedInputSchema: dict
+    normalizedOutputSchema: dict
+    inputMapping: list[dict]
+    outputMapping: list[dict]
+    toolPolicy: list[dict]
+    constraints: list[dict]
+    runtimePolicy: dict
+
+
+class AgentDefinitionCreate(AgentDefinitionBase):
+    pass
+
+
+class AgentDefinitionUpdate(AgentDefinitionBase):
+    pass
+
+
+class AgentDefinitionOut(AgentDefinitionBase):
+    id: str
+
+
+class WorkflowNodeIn(BaseModel):
+    id: str | None = None
+    agentDefinitionId: str
+    label: str | None = None
+    positionX: float
+    positionY: float
+    configOverride: dict = {}
+
+
+class WorkflowEdgeIn(BaseModel):
+    id: str | None = None
+    sourceNodeId: str
+    targetNodeId: str
+    mapping: list[dict] = []
+    condition: dict = {}
+
+
+class WorkflowBase(BaseModel):
+    name: str
+    description: str = ""
+    version: str = "1.0.0"
+    status: str = "draft"
+    isDefault: bool = False
+    nodes: list[WorkflowNodeIn]
+    edges: list[WorkflowEdgeIn]
+
+
+class WorkflowCreate(WorkflowBase):
+    pass
+
+
+class WorkflowUpdate(WorkflowBase):
+    pass
+
+
+class WorkflowNodeOut(WorkflowNodeIn):
+    id: str
+
+
+class WorkflowEdgeOut(WorkflowEdgeIn):
+    id: str
+
+
+class WorkflowOut(WorkflowBase):
+    id: str
+    nodes: list[WorkflowNodeOut]
+    edges: list[WorkflowEdgeOut]
+
+
+class WorkflowRunCreate(BaseModel):
+    traceId: str | None = None
+    payload: dict
+
+
+class WorkflowRunOut(BaseModel):
+    workflowId: str
+    traceId: str
+    result: dict
+
+
+class WorkflowVersionOut(BaseModel):
+    id: str
+    workflowId: str
+    version: str
+    status: str
+    publishedAt: str
+    snapshot: dict
+
+
+class WorkflowPublishOut(BaseModel):
+    workflow: WorkflowOut
+    version: WorkflowVersionOut

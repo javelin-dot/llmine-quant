@@ -18,6 +18,7 @@ async def seed() -> None:
         await _seed_users(session)
         await _seed_circuit_breakers(session)
         await _seed_risk_budgets(session)
+        await _seed_agent_workflow(session)
         await session.commit()
         print("Database seeded successfully.")
 
@@ -178,6 +179,100 @@ async def _seed_risk_budgets(session: AsyncSession) -> None:
         ),
     ]
     session.add_all(budgets)
+
+
+async def _seed_agent_workflow(session: AsyncSession) -> None:
+    """Seed full default agent definitions and the default trading workflow."""
+    import json
+    from app.domains.agents.models import AgentDefinition, WorkflowDefinition, WorkflowEdge, WorkflowNode
+
+    common_runtime = {"timeoutSeconds": 120, "maxRetries": 2, "retryBackoffSeconds": 5, "humanApprovalRequired": False}
+    default_model = {"provider": "openai", "model": "gpt-5.4", "temperature": 0.2, "topP": 1, "maxTokens": 4096}
+    normalized_in = {
+        "type": "object",
+        "properties": {"traceId": {"type": "string"}, "marketContext": {"type": "object"}, "payload": {"type": "object"}},
+        "required": ["traceId", "payload"],
+    }
+    normalized_out = {
+        "type": "object",
+        "properties": {"traceId": {"type": "string"}, "status": {"type": "string"}, "payload": {"type": "object"}},
+        "required": ["traceId", "status", "payload"],
+    }
+    specs = [
+        ("research", "研", "Research Agent", "扫描研究数据并生成研究摘要", "向 Strategy Agent 传递研究摘要"),
+        ("strategy", "策", "Strategy Agent", "生成策略候选与参数空间", "向 Backtest Agent 传递策略草案"),
+        ("backtest", "测", "Backtest Agent", "执行回测并产出验证结论", "向 Explain Agent 传递指标"),
+        ("explain", "析", "Explain Agent", "生成归因与偏差解释", "向 Portfolio Agent 传递归因摘要"),
+        ("portfolio", "组", "Portfolio Agent", "生成组合权重与再平衡建议", "向 Execution Agent 传递执行清单"),
+        ("execution", "执", "Execution Agent", "生成订单草案并执行审批流", "向 Risk Agent 传递成交与订单状态"),
+        ("risk", "险", "Risk Agent", "执行全链路风险校验", "向链路返回许可、降级或熔断"),
+    ]
+    rows: list[AgentDefinition] = []
+    for role, avatar, name, objective, downstream in specs:
+        rows.append(
+            AgentDefinition(
+                id=f"agent-def-{role}",
+                name=name,
+                role=role,
+                avatar=avatar,
+                description=f"{name} 默认定义",
+                objective=objective,
+                downstream_hint=downstream,
+                autonomy="human_gate" if role == "execution" else "supervised",
+                status="active",
+                model_config_json=json.dumps(default_model, ensure_ascii=False),
+                system_prompt=f"你是 {name}。必须遵守量化交易系统的安全、审计与结构化输出约束。",
+                user_prompt_template="基于以下标准化输入执行任务：{{normalized_input}}",
+                input_schema_json=json.dumps({"type": "object", "properties": {"payload": {"type": "object"}}}, ensure_ascii=False),
+                output_schema_json=json.dumps({"type": "object", "properties": {"result": {"type": "object"}}}, ensure_ascii=False),
+                normalized_input_schema_json=json.dumps(normalized_in, ensure_ascii=False),
+                normalized_output_schema_json=json.dumps(normalized_out, ensure_ascii=False),
+                input_mapping_json=json.dumps([{"from": "payload", "to": "payload"}], ensure_ascii=False),
+                output_mapping_json=json.dumps([{"from": "result", "to": "payload"}], ensure_ascii=False),
+                tool_policy_json=json.dumps([], ensure_ascii=False),
+                constraints_json=json.dumps(
+                    [{"name": "structured_output", "type": "schema", "rule": "必须返回 normalizedOutputSchema"}],
+                    ensure_ascii=False,
+                ),
+                runtime_policy_json=json.dumps(common_runtime | {"humanApprovalRequired": role == "execution"}, ensure_ascii=False),
+            )
+        )
+    session.add_all(rows)
+    workflow = WorkflowDefinition(
+        id="workflow-default-trading",
+        name="默认交易链路",
+        description="研究 → 策略 → 回测 → 解释 → 组合 → 执行 → 风控",
+        version="1.0.0",
+        status="draft",
+        is_default=True,
+    )
+    session.add(workflow)
+    nodes = [
+        WorkflowNode(
+            id=f"node-{role}",
+            workflow_id=workflow.id,
+            agent_definition_id=f"agent-def-{role}",
+            label=name,
+            position_x=40 + idx * 220,
+            position_y=120,
+            config_override_json="{}",
+        )
+        for idx, (role, _avatar, name, _objective, _downstream) in enumerate(specs)
+    ]
+    session.add_all(nodes)
+    session.add_all(
+        [
+            WorkflowEdge(
+                id=f"edge-{specs[idx][0]}-{specs[idx + 1][0]}",
+                workflow_id=workflow.id,
+                source_node_id=f"node-{specs[idx][0]}",
+                target_node_id=f"node-{specs[idx + 1][0]}",
+                mapping_json='[{"from":"payload","to":"payload"}]',
+                condition_json="{}",
+            )
+            for idx in range(len(specs) - 1)
+        ]
+    )
 
 
 if __name__ == "__main__":

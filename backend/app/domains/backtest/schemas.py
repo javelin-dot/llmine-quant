@@ -119,12 +119,46 @@ class BacktestCreateIn(BaseModel):
 
 
 class UniverseSuggestIn(BaseModel):
+    """Three-step universe builder criteria (三步选股法).
+
+    Step 1 — 流动性筛选 (Liquidity): index pool + data depth + average turnover.
+    Step 2 — 波动率筛选 (Volatility): annualized vol band (drop dead stocks and
+              hyper-volatile noise).
+    Step 3 — 动量筛选 (Momentum): trailing return over a lookback window.
+    """
+
     model_config = ConfigDict(populate_by_name=True)
 
     strategy_family: str = Field(default="trend", alias="strategyFamily")
     max_symbols: int = Field(default=20, ge=1, le=200, alias="maxSymbols")
-    min_bars: int = Field(default=60, ge=1, alias="minBars")
     diversify: bool = True
+
+    # Step 1 — liquidity
+    index_pool: str = Field(default="both", alias="indexPool")
+    # one of: 'csi300' | 'csi500' | 'csi1000' | 'both' | 'all'
+    # - csi300 / csi500 / csi1000:  index constituents (with weights)
+    # - both:                       CSI 300 + CSI 500 union
+    # - all:                        every A-share stock (~5k symbols, no weights)
+    boards: list[str] = Field(default_factory=list, alias="boards")
+    # Exchange-board filter (subset, empty = unrestricted). Values:
+    #   'main'    — 沪深主板 (600/601/603/605/000/001/002)
+    #   'star'    — 科创板 (688/689)
+    #   'chinext' — 创业板 (300/301)
+    #   'bse'     — 北交所 (43/83/87/92/8)
+    sectors: list[str] = Field(default_factory=list, alias="sectors")
+    # Industry sector names (申万行业, empty = unrestricted), e.g. ['半导体', '医药生物']
+    min_bars: int = Field(default=60, ge=1, alias="minBars")
+    min_avg_turnover_cny: float = Field(default=1e8, ge=0, alias="minAvgTurnoverCny")
+    # average daily turnover in CNY (default 1亿元 ≈ 100M CNY)
+
+    # Step 2 — volatility band (annualized)
+    min_volatility: float = Field(default=0.10, ge=0, le=5, alias="minVolatility")
+    max_volatility: float = Field(default=0.80, ge=0, le=5, alias="maxVolatility")
+
+    # Step 3 — momentum
+    momentum_window_days: int = Field(default=60, ge=5, le=500, alias="momentumWindowDays")
+    min_momentum: float = Field(default=-0.20, ge=-1.0, le=5.0, alias="minMomentum")
+    max_momentum: float = Field(default=2.0, ge=-1.0, le=10.0, alias="maxMomentum")
 
 
 class UniverseCandidate(BaseModel):
@@ -138,6 +172,10 @@ class UniverseCandidate(BaseModel):
     coverage_days: int = Field(alias="coverageDays")
     selected: bool
     reason: str | None = None  # AI-generated selection / exclusion reason
+    avg_turnover: float | None = Field(default=None, alias="avgTurnover")
+    volatility: float | None = None
+    momentum: float | None = None
+    drop_reason: str | None = Field(default=None, alias="dropReason")
 
 
 class UniverseSuggestOut(BaseModel):
@@ -150,6 +188,10 @@ class UniverseSuggestOut(BaseModel):
     recommendation: str
     ai_rationale: str | None = Field(default=None, alias="aiRationale")
     ai_model: str | None = Field(default=None, alias="aiModel")
+    # Honest pool-size accounting — `candidates` is truncated for UI rendering.
+    total_pool: int = Field(default=0, alias="totalPool")
+    total_eligible: int = Field(default=0, alias="totalEligible")
+    total_rejected: int = Field(default=0, alias="totalRejected")
 
 
 class BacktestMetricOut(BaseModel):
@@ -299,9 +341,11 @@ class SensitivityCreateIn(BaseModel):
     start_date: str = Field(alias="startDate")
     end_date: str = Field(alias="endDate")
     strategy_name: str = Field(default="dual_ma", alias="strategyName")
+    strategy_id: str | None = Field(default=None, alias="strategyId")
     initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
     strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
     cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
+    in_sample_end_date: str | None = Field(default=None, alias="inSampleEndDate")
 
 
 class SensitivityResultOut(BaseModel):
@@ -319,9 +363,11 @@ class WalkForwardCreateIn(BaseModel):
     start_date: str = Field(alias="startDate")
     end_date: str = Field(alias="endDate")
     strategy_name: str = Field(default="dual_ma", alias="strategyName")
+    strategy_id: str | None = Field(default=None, alias="strategyId")
     initial_cash: float = Field(default=1_000_000.0, alias="initialCash")
     strategy_params: dict[str, Any] = Field(default_factory=dict, alias="strategyParams")
     cost_config: BacktestCostIn = Field(default_factory=BacktestCostIn, alias="costConfig")
+    in_sample_end_date: str | None = Field(default=None, alias="inSampleEndDate")
     folds: int = Field(default=4, ge=2, le=20)
     train_ratio: float = Field(default=0.7, ge=0.1, lt=1.0, alias="trainRatio")
 

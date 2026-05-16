@@ -1,4 +1,4 @@
-import { useData } from '../../contexts/DataContext'
+import { useRisk } from '../../contexts/RiskContext'
 
 const STATUS_LABEL: Record<string, string> = {
   pass: 'PASS',
@@ -14,22 +14,24 @@ const STATUS_ICON: Record<string, string> = {
   enforced: '⛨',
 }
 
-export default function BiasGate() {
-  const data = useData()
-  const list = data.biasGate
+export default function ComplianceGate() {
+  const data = useRisk()
+  const list = data.complianceGates ?? []
   const watchCount = list.filter((b) => b.status === 'watch').length
   const failCount = list.filter((b) => b.status === 'fail').length
+  const enforcedCount = list.filter((b) => b.status === 'enforced').length
 
   return (
-    <div className="data-bias">
+    <div className="rk-compliance">
       <div className="db-head">
         <div>
-          <h4 className="db-title">偏差与许可闸门 · Bias & License Gate</h4>
+          <h4 className="db-title">合规网关 · Compliance &amp; License Gate</h4>
           <span className="db-sub">
             {list.length} 项检查 ·
             {watchCount > 0 && <em className="warn"> {watchCount} 注意</em>}
             {failCount > 0 && <em className="warn"> · {failCount} 失败</em>}
-            {watchCount === 0 && failCount === 0 && <em className="ok"> 全部通过</em>}
+            {enforcedCount > 0 && <em className="warn"> · {enforcedCount} 阻断</em>}
+            {watchCount === 0 && failCount === 0 && enforcedCount === 0 && <em className="ok"> 全部通过</em>}
           </span>
         </div>
         <button className="db-btn">查看规则</button>

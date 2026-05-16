@@ -85,6 +85,17 @@ class RiskBreachOut(BaseModel):
     statusTone: str
 
 
+class ComplianceGate(BaseModel):
+    """合规网关:数据偏差/许可/泄漏等,作为风控的子模块。"""
+
+    title: str
+    desc: str
+    status: str  # pass / watch / fail / enforced
+    statusTone: str
+    lastCheck: str
+    note: str
+
+
 class RiskScreen(BaseModel):
     header: RiskHeader
     kpis: list[RiskKpi]
@@ -93,3 +104,4 @@ class RiskScreen(BaseModel):
     circuits: list[CircuitBreaker]
     policyStream: list[PolicyDecisionOut]
     breaches: list[RiskBreachOut]
+    complianceGates: list[ComplianceGate]

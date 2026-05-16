@@ -8,6 +8,7 @@ import VaRPanel from './VaRPanel'
 import CircuitBreakerPanel from './CircuitBreakerPanel'
 import PolicyStream from './PolicyStream'
 import BreachHistory from './BreachHistory'
+import ComplianceGate from './ComplianceGate'
 
 interface RiskProps {
   onNavigate?: (target: string) => void
@@ -34,6 +35,7 @@ export default function Risk({ onModal }: RiskProps) {
           <VaRPanel />
         </div>
         <CircuitBreakerPanel onModal={onModal} />
+        <ComplianceGate />
         <div className="risk-sub">
           <PolicyStream />
           <BreachHistory />

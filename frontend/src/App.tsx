@@ -14,36 +14,45 @@ import Security from './screens/Security'
 import Collaboration from './screens/Collaboration'
 import Audit from './screens/Audit'
 import Paper from './screens/Paper'
+import Agent from './screens/Agent'
 
-type Screen = 'dashboard' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit' | 'paper'
+type Screen = 'dashboard' | 'agent' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit' | 'paper'
 type ModalType = 'global' | 'kill' | 'create' | 'autopilot' | 'approve' | 'pause'
 
-const VALID_SCREENS: Screen[] = ['dashboard', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit', 'paper']
+const VALID_SCREENS: Screen[] = ['dashboard', 'agent', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit', 'paper']
 const VALID_MODALS: ModalType[] = ['global', 'kill', 'create', 'autopilot', 'approve', 'pause']
 
-const navItems: { target: Screen; icon: string; label: string }[] = [
-  { target: 'dashboard', icon: '⌘', label: 'AI 指挥中心' },
-  { target: 'strategy', icon: '◇', label: '策略工厂' },
-  { target: 'backtest', icon: '↯', label: '回测实验室' },
-  { target: 'paper', icon: '◎', label: '模拟盘' },
-  { target: 'explain', icon: '析', label: '解释与血缘' },
-  { target: 'portfolio', icon: '◌', label: '组合驾驶舱' },
-  { target: 'execution', icon: '⇄', label: '交易审批' },
+type NavEntry = { target: Screen; label: string; abbr: string }
+
+const navItems: NavEntry[] = [
+  { target: 'dashboard', label: 'Dashboard', abbr: '主页' },
+  { target: 'agent', label: 'Agent', abbr: 'Agent' },
+  { target: 'strategy', label: '策略工厂', abbr: '策略' },
+  { target: 'backtest', label: '回测实验室', abbr: '回测' },
+  { target: 'paper', label: '模拟盘', abbr: '模拟' },
+  { target: 'explain', label: '解释与血缘', abbr: '解释' },
+  { target: 'portfolio', label: '组合驾驶舱', abbr: '组合' },
+  { target: 'execution', label: '交易审批', abbr: '审批' },
 ]
 
-const navControl: { target: Screen; icon: string; label: string }[] = [
-  { target: 'risk', icon: '盾', label: '风控与熔断' },
-  { target: 'data', icon: '源', label: '行情与合规' },
-  { target: 'security', icon: '钥', label: '资金安全' },
-  { target: 'collaboration', icon: '协', label: '协作实验室' },
-  { target: 'audit', icon: '迹', label: '审计追踪' },
+const navControl: NavEntry[] = [
+  { target: 'risk', label: '风控与熔断', abbr: '风控' },
+  { target: 'data', label: '行情数据', abbr: '行情' },
+  { target: 'security', label: '资金安全', abbr: '资金' },
+  { target: 'collaboration', label: '协作实验室', abbr: '协作' },
+  { target: 'audit', label: '审计追踪', abbr: '审计' },
 ]
+
+const NAV_MOBILE_ORDER: Screen[] = ['dashboard', 'agent', 'strategy', 'backtest', 'explain', 'execution', 'risk']
+
+const navLookup: NavEntry[] = [...navItems, ...navControl]
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [modal, setModal] = useState<ModalType | null>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [backtestContext, setBacktestContext] = useState<{ strategyId?: string; taskId?: string }>({})
+  const [paperContext, setPaperContext] = useState<{ accountId?: string }>({})
   const [currentUser, setCurrentUser] = useState<{ userId: string; name: string; email: string } | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [globalData, setGlobalData] = useState<{
@@ -106,7 +115,8 @@ export default function App() {
   const closeModal = useCallback(() => setModal(null), [])
 
   const handleScreenNavigate = useCallback((target: string) => {
-    // Support compound targets like `backtest:strategyId=abc` or `backtest:taskId=xyz`.
+    // Support compound targets like `backtest:strategyId=abc`, `backtest:taskId=xyz`,
+    // or `paper:accountId=abc`.
     const [base, rest] = target.split(':')
     if ((VALID_SCREENS as string[]).includes(base)) {
       if (base === 'backtest') {
@@ -120,6 +130,17 @@ export default function App() {
           setBacktestContext(ctx)
         } else {
           setBacktestContext({})
+        }
+      } else if (base === 'paper') {
+        if (rest) {
+          const ctx: { accountId?: string } = {}
+          for (const piece of rest.split('&')) {
+            const [k, v] = piece.split('=')
+            if (k === 'accountId' && v) ctx.accountId = decodeURIComponent(v)
+          }
+          setPaperContext(ctx)
+        } else {
+          setPaperContext({})
         }
       }
       switchScreen(base as Screen)
@@ -138,6 +159,8 @@ export default function App() {
     switch (screen) {
       case 'dashboard':
         return <Dashboard onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+      case 'agent':
+        return <Agent onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'strategy':
         return <Strategy onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'backtest':
@@ -166,7 +189,7 @@ export default function App() {
       case 'audit':
         return <Audit onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'paper':
-        return <Paper onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
+        return <Paper onNavigate={handleScreenNavigate} onModal={handleScreenModal} initialAccountId={paperContext.accountId} />
       default:
         return null
     }
@@ -198,11 +221,13 @@ export default function App() {
           {navItems.map((n) => (
             <button
               key={n.target}
+              type="button"
               className={screen === n.target ? 'nav-btn active' : 'nav-btn'}
+              title={n.label}
               onClick={() => switchScreen(n.target)}
             >
-              <span className="nav-ico">{n.icon}</span>
-              <span>{n.label}</span>
+              <span className="nav-label">{n.label}</span>
+              <span className="nav-abbr">{n.abbr}</span>
             </button>
           ))}
         </nav>
@@ -212,54 +237,77 @@ export default function App() {
           {navControl.map((n) => (
             <button
               key={n.target}
+              type="button"
               className={screen === n.target ? 'nav-btn active' : 'nav-btn'}
+              title={n.label}
               onClick={() => switchScreen(n.target)}
             >
-              <span className="nav-ico">{n.icon}</span>
-              <span>{n.label}</span>
+              <span className="nav-label">{n.label}</span>
+              <span className="nav-abbr">{n.abbr}</span>
             </button>
           ))}
         </nav>
 
-        <div className="side-card">
-          <div className="label">System Health</div>
-          <div className="score">
-            <strong>{globalData?.system.healthScore ?? '—'}</strong>
-            <span>{globalData?.system.healthStatusLabel ?? '—'}</span>
+        <div className="sidebar-footer">
+          <div className="side-card">
+            <div className="label">System Health</div>
+            <div className="score">
+              <strong>{globalData?.system.healthScore ?? '—'}</strong>
+              <span>{globalData?.system.healthStatusLabel ?? '—'}</span>
+            </div>
+            <div className="mini-bars" aria-hidden="true">
+              {(globalData?.system.healthBarHeights ?? []).map((h, i) => (
+                <i key={i} style={{ height: `${h}px` }} />
+              ))}
+            </div>
           </div>
-          <div className="mini-bars" aria-hidden="true">
-            {(globalData?.system.healthBarHeights ?? []).map((h, i) => (
-              <i key={i} style={{ height: `${h}px` }} />
-            ))}
+
+          <div className="session-card" aria-label="会话">
+            <span className="session-user" title={currentUser.email}>
+              <span className="session-user-dot" aria-hidden="true" />
+              <span className="session-user-copy">
+                <strong>{currentUser.name}</strong>
+                <small>{currentUser.email}</small>
+              </span>
+            </span>
+            <button
+              type="button"
+              className="btn secondary session-logout"
+              onClick={async () => {
+                const token = authStore.getToken()
+                if (token) await api.auth.logout(token).catch(() => {})
+                authStore.clearToken()
+                setCurrentUser(null)
+              }}
+            >
+              退出
+            </button>
           </div>
         </div>
       </aside>
 
       {/* Main */}
       <main>
-        {/* Topbar */}
-        <header className="topbar">
-          <button className="command-palette" onClick={() => openModal('create')}>
-            <span>⌕</span>
-            <span>Command Palette</span>
-            <kbd>⌘</kbd>
-            <kbd>K</kbd>
-          </button>
-          <div className="top-actions">
-            <span className="pill">
-              <span className="dot" /> AI Autopilot {globalData?.system.autopilot ? 'ON' : 'OFF'}
+        <header className="mobile-session-bar" aria-label="会话">
+          <span className="session-user" title={currentUser.email}>
+            <span className="session-user-dot" aria-hidden="true" />
+            <span className="session-user-copy">
+              <strong>{currentUser.name}</strong>
+              <small>{currentUser.email}</small>
             </span>
-            <span className="pill">{globalData?.system.riskGateLabel ?? '—'}</span>
-            <button className="btn secondary" onClick={() => openModal('global')}>全局概览</button>
-            <button className="btn danger" onClick={() => openModal('kill')}>Kill Switch</button>
-            <span className="pill" title={currentUser.email}>{currentUser.name}</span>
-            <button className="btn secondary" onClick={async () => {
+          </span>
+          <button
+            type="button"
+            className="btn secondary session-logout"
+            onClick={async () => {
               const token = authStore.getToken()
               if (token) await api.auth.logout(token).catch(() => {})
               authStore.clearToken()
               setCurrentUser(null)
-            }}>退出</button>
-          </div>
+            }}
+          >
+            退出
+          </button>
         </header>
 
         <section className="screen active">{renderActiveScreen()}</section>
@@ -267,15 +315,20 @@ export default function App() {
 
       {/* Mobile Tabs */}
       <div className="mobile-tabs">
-        {['dashboard', 'strategy', 'backtest', 'explain', 'execution', 'risk'].map((t) => (
-          <button
-            key={t}
-            className={screen === t ? 'nav-btn active' : 'nav-btn'}
-            onClick={() => switchScreen(t as Screen)}
-          >
-            {navItems.find((n) => n.target === t)?.icon || navControl.find((n) => n.target === t)?.icon}
-          </button>
-        ))}
+        {NAV_MOBILE_ORDER.map((t) => {
+          const entry = navLookup.find((n) => n.target === t)
+          return (
+            <button
+              key={t}
+              type="button"
+              className={screen === t ? 'nav-btn active' : 'nav-btn'}
+              title={entry?.label ?? t}
+              onClick={() => switchScreen(t)}
+            >
+              <span className="mobile-tab-abbr">{entry?.abbr ?? t}</span>
+            </button>
+          )
+        })}
       </div>
 
       {/* Modal */}

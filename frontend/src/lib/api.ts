@@ -234,9 +234,22 @@ export interface BacktestTaskListPayload {
 
 export interface SymbolSummary {
   symbol: string
+  name?: string | null
   bars: number
   startDate: string
   endDate: string
+}
+
+export interface SymbolStatsOut {
+  totalSymbols: number
+  totalBars: number
+  latestTradeDate: string | null
+  earliestTradeDate: string | null
+}
+
+export interface StockInfoRefreshOut {
+  upserted: number
+  syncedAt: string
 }
 
 export interface BacktestReportPayload {
@@ -274,6 +287,7 @@ export interface BacktestCreatePayload {
   startDate: string
   endDate: string
   strategyName?: string
+  strategyId?: string
   initialCash?: number
   inSampleEndDate?: string
   strategyParams?: Record<string, unknown>
@@ -289,6 +303,8 @@ export interface WalkForwardCreatePayload extends BacktestCreatePayload {
   folds?: number
   trainRatio?: number
 }
+
+export type SensitivityCreatePayload = BacktestCreatePayload
 
 // ── Strategy Factory list item (for Backtest Lab strategy selector) ──────────
 export interface StrategyListItem {
@@ -306,12 +322,24 @@ export interface StrategyListItem {
   updatedAt: string
 }
 
-// ── Universe suggestion ───────────────────────────────────────────────────────
+// ── Universe suggestion (三步选股法) ──────────────────────────────────────────
 export interface UniverseSuggestCriteria {
   strategyFamily?: string
   maxSymbols?: number
-  minBars?: number
   diversify?: boolean
+  // Step 1 — 流动性
+  indexPool?: 'csi300' | 'csi500' | 'csi1000' | 'both' | 'all'
+  boards?: ('main' | 'star' | 'chinext' | 'bse')[]
+  sectors?: string[]
+  minBars?: number
+  minAvgTurnoverCny?: number
+  // Step 2 — 波动率
+  minVolatility?: number
+  maxVolatility?: number
+  // Step 3 — 动量
+  momentumWindowDays?: number
+  minMomentum?: number
+  maxMomentum?: number
 }
 
 export interface UniverseCandidate {
@@ -323,6 +351,10 @@ export interface UniverseCandidate {
   coverageDays: number
   selected: boolean
   reason: string | null  // AI-generated selection / exclusion reason
+  avgTurnover?: number | null
+  volatility?: number | null
+  momentum?: number | null
+  dropReason?: string | null
 }
 
 export interface UniverseSuggestResult {
@@ -333,6 +365,9 @@ export interface UniverseSuggestResult {
   recommendation: string
   aiRationale: string | null  // overall AI rationale
   aiModel: string | null      // which model generated this
+  totalPool?: number          // size of the raw candidate pool (pre-filter)
+  totalEligible?: number      // passed all three steps
+  totalRejected?: number      // failed any of the three steps
 }
 
 // ── Phase 4 paper-trading types ──────────────────────────────────────────
@@ -440,6 +475,82 @@ export interface RunEodSummary {
 // MockData['dashboard'] already includes meta/system/modals — use it directly.
 type DashboardOverview = MockData['dashboard']
 
+export interface AgentDefinition {
+  id: string
+  name: string
+  role: string
+  avatar: string
+  description: string
+  objective: string
+  downstreamHint: string
+  autonomy: string
+  status: string
+  modelConfig: Record<string, unknown>
+  systemPrompt: string
+  userPromptTemplate: string
+  inputSchema: Record<string, unknown>
+  outputSchema: Record<string, unknown>
+  normalizedInputSchema: Record<string, unknown>
+  normalizedOutputSchema: Record<string, unknown>
+  inputMapping: Record<string, unknown>[]
+  outputMapping: Record<string, unknown>[]
+  toolPolicy: Record<string, unknown>[]
+  constraints: Record<string, unknown>[]
+  runtimePolicy: Record<string, unknown>
+}
+
+export interface WorkflowNode {
+  id: string
+  agentDefinitionId: string
+  label: string | null
+  positionX: number
+  positionY: number
+  configOverride: Record<string, unknown>
+}
+
+export interface WorkflowEdge {
+  id: string
+  sourceNodeId: string
+  targetNodeId: string
+  mapping: Record<string, unknown>[]
+  condition: Record<string, unknown>
+}
+
+export interface AgentWorkflow {
+  id: string
+  name: string
+  description: string
+  version: string
+  status: string
+  isDefault: boolean
+  nodes: WorkflowNode[]
+  edges: WorkflowEdge[]
+}
+
+export interface WorkflowVersion {
+  id: string
+  workflowId: string
+  version: string
+  status: string
+  publishedAt: string
+  snapshot: Record<string, unknown>
+}
+
+export interface WorkflowPublishResult {
+  workflow: AgentWorkflow
+  version: WorkflowVersion
+}
+
+export interface WorkflowRunResult {
+  workflowId: string
+  traceId: string
+  result: {
+    current?: Record<string, unknown>
+    nodeResults?: Record<string, Record<string, unknown>>
+    history?: { agent: string; result: Record<string, unknown> }[]
+  }
+}
+
 export interface StrategyTemplate {
   id: string
   name: string
@@ -477,14 +588,19 @@ export interface MarketBarImportAksharePayload {
 export interface MarketBarDailyOut {
   id: string
   symbol: string
-  trade_date: string
+  tradeDate: string
+  prevClose: number | null
   open: number
   high: number
   low: number
   close: number
   volume: number
   amount: number | null
-  adjusted_close: number | null
+  adjustedClose: number | null
+  isSt?: boolean
+  isLimitUp?: boolean
+  isLimitDown?: boolean
+  isSuspended?: boolean
 }
 
 export interface FeatureOut {
@@ -500,15 +616,44 @@ export interface FeatureOut {
 
 export interface MarketDataImportSummary {
   source: string
-  total_rows: number
-  imported_rows: number
-  inserted_rows: number
-  updated_rows: number
-  skipped_rows: number
+  totalRows: number
+  importedRows: number
+  insertedRows: number
+  updatedRows: number
+  skippedRows: number
   symbols: string[]
-  start_date: string | null
-  end_date: string | null
+  startDate: string | null
+  endDate: string | null
   errors: string[]
+}
+
+export type MarketSyncPhase = 'idle' | 'scanning' | 'syncing' | 'retrying' | 'st_flags' | 'completed' | 'failed'
+
+export interface MarketSyncStatus {
+  taskId: string | null
+  phase: MarketSyncPhase
+  startedAt: string | null
+  finishedAt: string | null
+  total: number
+  done: number
+  skipped: number
+  insertedRows: number
+  updatedRows: number
+  failures: number
+  ratePerSec: number
+  etaSeconds: number | null
+  lastSymbol: string | null
+  error: string | null
+  isRunning: boolean
+}
+
+export interface MarketSyncStartPayload {
+  startDate?: string
+  endDate?: string
+  adjust?: 'qfq' | 'hfq' | 'none'
+  concurrency?: number
+  boards?: string[]
+  incremental?: boolean
 }
 
 export const api = {
@@ -550,6 +695,25 @@ export const api = {
   dashboard: {
     overview: () =>
       getJson<DashboardOverview>('/dashboard/overview', () => mock.dashboard),
+  },
+  agent: {
+    definitions: () => getJson<AgentDefinition[]>('/agents/definitions', () => []),
+    createDefinition: (payload: Omit<AgentDefinition, 'id'>) =>
+      postJson<AgentDefinition>('/agents/definitions', payload),
+    updateDefinition: (id: string, payload: Omit<AgentDefinition, 'id'>) =>
+      putJson<AgentDefinition>(`/agents/definitions/${id}`, payload),
+    deleteDefinition: (id: string) => deleteJson(`/agents/definitions/${id}`),
+    workflows: () => getJson<AgentWorkflow[]>('/agents/workflows', () => []),
+    createWorkflow: (payload: Omit<AgentWorkflow, 'id'>) =>
+      postJson<AgentWorkflow>('/agents/workflows', payload),
+    updateWorkflow: (id: string, payload: Omit<AgentWorkflow, 'id'>) =>
+      putJson<AgentWorkflow>(`/agents/workflows/${id}`, payload),
+    workflowVersions: (id: string) =>
+      getJson<WorkflowVersion[]>(`/agents/workflows/${id}/versions`, () => []),
+    publishWorkflow: (id: string) =>
+      postJson<WorkflowPublishResult>(`/agents/workflows/${id}/publish`, {}),
+    runWorkflow: (id: string, payload: { traceId?: string; payload: Record<string, unknown> }) =>
+      postJson<WorkflowRunResult>(`/agents/workflows/${id}/run`, payload),
   },
   strategy: {
     overview: () => getJson<MockData['strategy']>('/strategies/overview', () => mock.strategy),
@@ -661,9 +825,20 @@ export const api = {
       postJson<UniverseSuggestResult>('/backtests/universe/suggest', {
         strategyFamily: criteria.strategyFamily ?? 'trend',
         maxSymbols: criteria.maxSymbols ?? 20,
-        minBars: criteria.minBars ?? 60,
         diversify: criteria.diversify ?? true,
+        indexPool: criteria.indexPool ?? 'both',
+        boards: criteria.boards ?? [],
+        sectors: criteria.sectors ?? [],
+        minBars: criteria.minBars ?? 60,
+        minAvgTurnoverCny: criteria.minAvgTurnoverCny ?? 1e8,
+        minVolatility: criteria.minVolatility ?? 0.10,
+        maxVolatility: criteria.maxVolatility ?? 0.80,
+        momentumWindowDays: criteria.momentumWindowDays ?? 60,
+        minMomentum: criteria.minMomentum ?? -0.20,
+        maxMomentum: criteria.maxMomentum ?? 2.0,
       }),
+    sectorList: () =>
+      getJson<{ name: string; count: number }[]>('/backtests/universe/sectors', () => []),
   },
   explain: {
     overview: () => getJson<MockData['explain']>('/explain/overview', () => mock.explain),
@@ -704,18 +879,55 @@ export const api = {
   },
   data: {
     overview: () => getJson<MockData['data']>('/data/overview', () => mock.data),
-    symbols: () => getJson<SymbolSummary[]>('/data/symbols', () => []),
-    marketBars: (symbol?: string, startDate?: string, endDate?: string, limit = 500) => {
+    symbols: (
+      params: { search?: string; sort?: 'bars' | 'symbol' | 'recent'; offset?: number; limit?: number } = {},
+    ) => {
+      const sp = new URLSearchParams()
+      if (params.search) sp.set('search', params.search)
+      if (params.sort) sp.set('sort', params.sort)
+      if (params.offset != null) sp.set('offset', String(params.offset))
+      if (params.limit != null) sp.set('limit', String(params.limit))
+      const qs = sp.toString()
+      return getJson<SymbolSummary[]>(`/data/symbols${qs ? `?${qs}` : ''}`, () => [])
+    },
+    symbolsStats: () =>
+      getJson<SymbolStatsOut>('/data/symbols/stats', () => ({
+        totalSymbols: 0,
+        totalBars: 0,
+        latestTradeDate: null,
+        earliestTradeDate: null,
+      })),
+    marketBars: (
+      symbol?: string,
+      startDate?: string,
+      endDate?: string,
+      limit = 10,
+      offset = 0,
+      order: 'asc' | 'desc' = 'desc',
+    ) => {
       const params = new URLSearchParams()
       if (symbol) params.set('symbol', symbol)
       if (startDate) params.set('startDate', startDate)
       if (endDate) params.set('endDate', endDate)
       params.set('limit', String(limit))
+      params.set('offset', String(offset))
+      params.set('order', order)
       return getJson<MarketBarDailyOut[]>(`/data/market-bars?${params}`, () => [])
     },
     importAkshare: (payload: MarketBarImportAksharePayload) =>
       postJson<MarketDataImportSummary>('/data/market-bars/import/akshare', payload),
     features: () => getJson<FeatureOut[]>('/data/features', () => []),
+    syncStatus: () =>
+      getJson<MarketSyncStatus>('/data/market-bars/sync/status', () => ({
+        taskId: null, phase: 'idle', startedAt: null, finishedAt: null,
+        total: 0, done: 0, skipped: 0, insertedRows: 0, updatedRows: 0,
+        failures: 0, ratePerSec: 0, etaSeconds: null, lastSymbol: null,
+        error: null, isRunning: false,
+      })),
+    triggerSync: (payload: MarketSyncStartPayload = {}) =>
+      postJson<MarketSyncStatus>('/data/market-bars/sync/full', payload),
+    refreshStockInfo: () =>
+      postJson<StockInfoRefreshOut>('/data/stock-info/refresh', {}),
   },
   security: {
     overview: () => getJson<MockData['security']>('/security/overview', () => mock.security),

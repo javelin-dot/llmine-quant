@@ -12,6 +12,7 @@ from app.domains.risk.models import CircuitBreaker as CircuitBreakerModel
 from app.domains.risk.models import PolicyDecision, RiskBreach, RiskBudget, VaRSnapshot
 from app.domains.risk.schemas import (
     CircuitBreaker,
+    ComplianceGate,
     PolicyDecisionOut,
     RiskBreachOut,
     RiskBudgetRow,
@@ -185,6 +186,46 @@ _KPIS = [
 ]
 
 
+_COMPLIANCE_GATES = [
+    ComplianceGate(
+        title="Survivorship Bias 幸存者偏差",
+        desc="研究池强制包含退市/暂停股票与历史成分变更",
+        status="pass", statusTone="green", lastCheck="15:30",
+        note="0 violations · 已加入 286 退市标的",
+    ),
+    ComplianceGate(
+        title="Look-ahead Bias 未来函数",
+        desc="特征只能使用信号 t 时刻已可见的数据",
+        status="pass", statusTone="green", lastCheck="15:30",
+        note="Time-Travel CI 全部通过 · 4823 测试用例",
+    ),
+    ComplianceGate(
+        title="Feature Leakage 特征泄漏",
+        desc="标签、成交结果、未来财务不得进入训练",
+        status="watch", statusTone="yellow", lastCheck="15:25",
+        note="Tech-Momentum-v18: 2 个特征与 t+1 收益相关性 0.62",
+    ),
+    ComplianceGate(
+        title="License Scope 数据许可",
+        desc="Research Only 数据禁止进入实盘信号",
+        status="enforced", statusTone="red", lastCheck="15:31",
+        note="12 笔阻断 · AKShare/雪球自动剔除",
+    ),
+    ComplianceGate(
+        title="Class Imbalance 样本失衡",
+        desc="正负样本比例需在 0.3-0.7 区间",
+        status="pass", statusTone="green", lastCheck="15:00",
+        note="当前比例 0.48 · 正常",
+    ),
+    ComplianceGate(
+        title="Data Integrity 数据完整性",
+        desc="关键字段缺失率与跨源一致性检查",
+        status="pass", statusTone="green", lastCheck="14:50",
+        note="缺失率 0.08% · 跨源偏差 < 0.1%",
+    ),
+]
+
+
 @router.get("/overview", response_model=RiskScreen)
 async def get_risk_overview(db: DbSession) -> RiskScreen:
     """Return the complete Risk Control screen — DB-driven."""
@@ -204,7 +245,14 @@ async def get_risk_overview(db: DbSession) -> RiskScreen:
         circuits=circuits,
         policyStream=policy,
         breaches=breaches,
+        complianceGates=_COMPLIANCE_GATES,
     )
+
+
+@router.get("/compliance-gates", response_model=list[ComplianceGate])
+async def get_compliance_gates() -> list[ComplianceGate]:
+    """Return compliance gate checks (bias / leakage / license / integrity)."""
+    return _COMPLIANCE_GATES
 
 
 @router.post("/circuit-breakers/{level}/trigger")

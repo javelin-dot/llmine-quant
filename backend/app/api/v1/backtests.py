@@ -199,71 +199,171 @@ _UNIVERSE_SYSTEM_PROMPT = """你是量化交易股票池构建（Universe Constr
 
 @router.post("/universe/suggest", response_model=UniverseSuggestOut)
 async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> UniverseSuggestOut:
-    """AI-powered universe builder.
+    """AI-powered universe builder using the three-step stock selection method.
 
-    Candidate pool:  real A-share stocks from CSI 300/500 (via AKShare).
-    Data-ready flag: cross-references MarketBarDaily to mark which candidates
-                     already have historical data available for backtesting.
-    LLM selection:   the configured LLM picks and explains each symbol.
+    1. Liquidity (流动性):  index pool membership + data depth + avg turnover.
+    2. Volatility (波动):   annualized volatility band.
+    3. Momentum (动量):     trailing return over a lookback window.
+
+    Each parameter is enforced server-side, so changing any criterion produces
+    a different candidate / selection list. The LLM picks the final pool from
+    the filtered candidates and explains every choice.
     """
     import asyncio as _asyncio
+    import math
     from app.integrations.llm.factory import get_llm_provider
-    from app.integrations.market_data.factory import get_market_data_provider
 
-    # ── Step 1: build real candidate pool from CSI 300/500 ──────────────
+    # ── Build raw candidate list from the requested index pool ───────────
+    # Supported pools:
+    #   csi300 / csi500 / csi1000 — index constituents w/ weights (via AKShare)
+    #   both                       — CSI 300 + CSI 500 union
+    #   all                        — every A-share spot (no weights)
+    # Then we apply board (exchange-board) and sector (industry) filters as
+    # independent dimensions so universes like "ChiNext ∩ 半导体" are expressible.
+
+    # Code-prefix → board mapping (raw 6-digit code, no suffix).
+    _BOARD_PREFIXES: dict[str, tuple[str, ...]] = {
+        "main":    ("600", "601", "603", "605", "000", "001", "002"),
+        "star":    ("688", "689"),
+        "chinext": ("300", "301"),
+        "bse":     ("43", "83", "87", "92", "8"),
+    }
+    requested_boards = {b for b in payload.boards if b in _BOARD_PREFIXES}
+    requested_board_prefixes: tuple[str, ...] = tuple(
+        p for b in requested_boards for p in _BOARD_PREFIXES[b]
+    )
+
+    def _exchange_suffix(code: str) -> str:
+        # BSE codes (43/83/87/92/starts-with-8 except 600 are SH).
+        if code.startswith(("43", "83", "87", "92")):
+            return "BJ"
+        if code.startswith("8") and not code.startswith(("80",)):  # 8xx → BSE
+            return "BJ"
+        if code.startswith(("60", "68", "9", "11", "13")):
+            return "SH"
+        return "SZ"
+
+    def _passes_board(raw_code: str) -> bool:
+        if not requested_board_prefixes:
+            return True
+        return raw_code.startswith(requested_board_prefixes)
+
     candidates_raw: list[dict] = []
+    seen: set[str] = set()
+
+    def _push(symbol: str, name: str, weight: float, label: str) -> None:
+        if not symbol or symbol in seen:
+            return
+        raw_code = symbol.split(".")[0]
+        if not _passes_board(raw_code):
+            return
+        seen.add(symbol)
+        candidates_raw.append({
+            "symbol": symbol,
+            "name": name,
+            "weight": weight,
+            "index": label,
+            "bars": 0,
+            "start_date": "",
+            "end_date": "",
+            "coverage_days": 0,
+            "has_local_data": False,
+            "avg_turnover": 0.0,
+            "volatility": 0.0,
+            "momentum": 0.0,
+        })
+
+    pool_codes: list[str]
+    if payload.index_pool == "csi300":
+        pool_codes = ["000300"]
+    elif payload.index_pool == "csi500":
+        pool_codes = ["000905"]
+    elif payload.index_pool == "csi1000":
+        pool_codes = ["000852"]
+    elif payload.index_pool == "all":
+        pool_codes = []  # full-market path below
+    else:  # "both" — CSI 300 + 500
+        pool_codes = ["000300", "000905"]
+
     try:
         import akshare as ak
 
-        # CSI 300 (沪深300) + CSI 500 (中证500) — both fast via CSINDEX weight API
-        index_codes = ["000300", "000905"]
-        index_dfs = await _asyncio.gather(
-            *[_asyncio.to_thread(ak.index_stock_cons_weight_csindex, symbol=code)
-              for code in index_codes],
-            return_exceptions=True,
-        )
-        seen: set[str] = set()
-        for df in index_dfs:
-            if isinstance(df, Exception) or df is None or df.empty:
-                continue
-            for _, row in df.iterrows():
-                code = str(row.get("成分券代码", "")).strip()
-                exch = str(row.get("交易所", "")).strip()
-                if not code or code in seen:
+        if payload.index_pool == "all":
+            # `stock_zh_a_spot_em` returns the whole A-share market (~5k rows).
+            # It has no weight column — that's fine for full-market scans.
+            df = await _asyncio.to_thread(ak.stock_zh_a_spot_em)
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    sym_code = str(row.get("代码", "")).strip()
+                    if not sym_code:
+                        continue
+                    name = str(row.get("名称", ""))
+                    _push(f"{sym_code}.{_exchange_suffix(sym_code)}", name, 0.0, "all")
+        elif pool_codes:
+            index_dfs = await _asyncio.gather(
+                *[_asyncio.to_thread(ak.index_stock_cons_weight_csindex, symbol=code)
+                  for code in pool_codes],
+                return_exceptions=True,
+            )
+            index_label = {"000300": "csi300", "000905": "csi500", "000852": "csi1000"}
+            for code, df in zip(pool_codes, index_dfs, strict=False):
+                if isinstance(df, Exception) or df is None or df.empty:
                     continue
-                seen.add(code)
-                suffix = "SH" if "上海" in exch else "SZ"
-                symbol = f"{code}.{suffix}"
-                weight = float(row.get("权重", 0) or 0)
-                name = str(row.get("成分券名称", ""))
-                candidates_raw.append({
-                    "symbol": symbol,
-                    "name": name,
-                    "weight": weight,
-                    # bars/dates filled after DB cross-reference below
-                    "bars": 0,
-                    "start_date": "",
-                    "end_date": "",
-                    "coverage_days": 0,
-                    "has_local_data": False,
-                })
+                for _, row in df.iterrows():
+                    sym_code = str(row.get("成分券代码", "")).strip()
+                    exch = str(row.get("交易所", "")).strip()
+                    if not sym_code:
+                        continue
+                    suffix = "SH" if "上海" in exch else "SZ" if "深圳" in exch else _exchange_suffix(sym_code)
+                    symbol = f"{sym_code}.{suffix}"
+                    weight = float(row.get("权重", 0) or 0)
+                    name = str(row.get("成分券名称", ""))
+                    _push(symbol, name, weight, index_label.get(code, code))
+
+        # Sector intersection (申万行业): if the user picked sectors, fetch each
+        # board's constituents and intersect with candidates_raw.
+        if payload.sectors and candidates_raw:
+            sector_dfs = await _asyncio.gather(
+                *[_asyncio.to_thread(ak.stock_board_industry_cons_em, symbol=s)
+                  for s in payload.sectors],
+                return_exceptions=True,
+            )
+            sector_codes: set[str] = set()
+            for df in sector_dfs:
+                if isinstance(df, Exception) or df is None or df.empty:
+                    continue
+                for _, row in df.iterrows():
+                    c = str(row.get("代码", "")).strip()
+                    if c:
+                        sector_codes.add(c)
+            if sector_codes:
+                candidates_raw = [
+                    c for c in candidates_raw
+                    if c["symbol"].split(".")[0] in sector_codes
+                ]
+            else:
+                # All sector fetches failed or were empty — clear pool so the
+                # UI surfaces a clear "sector data unavailable" empty state.
+                candidates_raw = []
     except Exception:  # noqa: BLE001
         pass  # fall through to DB-only mode below
 
-    # ── Step 2: cross-reference with MarketBarDaily for data-ready flag ──
-    db_rows = (
+    # ── Pull bar stats & price/volume series for momentum/volatility ──────
+    # Single grouped query for aggregate stats:
+    agg_rows = (
         await db.execute(
             select(
                 MarketBarDaily.symbol,
                 func.count(MarketBarDaily.id).label("bars"),
                 func.min(MarketBarDaily.trade_date).label("start_date"),
                 func.max(MarketBarDaily.trade_date).label("end_date"),
+                func.avg(MarketBarDaily.amount).label("avg_amount"),
             )
             .group_by(MarketBarDaily.symbol)
         )
     ).all()
     db_stats: dict[str, dict] = {}
-    for row in db_rows:
+    for row in agg_rows:
         try:
             cov = (_date.fromisoformat(row.end_date) - _date.fromisoformat(row.start_date)).days
         except Exception:
@@ -273,91 +373,246 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
             "start_date": row.start_date,
             "end_date": row.end_date,
             "coverage_days": cov,
+            "avg_turnover": float(row.avg_amount or 0.0),
         }
 
-    # Merge DB stats into AKShare candidates
-    for c in candidates_raw:
-        if c["symbol"] in db_stats:
-            s = db_stats[c["symbol"]]
-            c.update(s, has_local_data=True)
-
-    # If AKShare fetch failed, fall back to DB-only list
+    # If no AKShare data, build candidates directly from DB symbols. Honor
+    # the board filter even in this fallback path.
     if not candidates_raw:
         for sym, stats in db_stats.items():
+            raw_code = sym.split(".")[0]
+            if not _passes_board(raw_code):
+                continue
             candidates_raw.append({
-                "symbol": sym, "name": "", "weight": 0.0,
-                "has_local_data": True, **stats,
+                "symbol": sym, "name": "", "weight": 0.0, "index": "db",
+                "has_local_data": True, "volatility": 0.0, "momentum": 0.0,
+                **stats,
             })
 
+    for c in candidates_raw:
+        if c["symbol"] in db_stats:
+            c.update(db_stats[c["symbol"]], has_local_data=True)
+
+    # ── Compute volatility + momentum per data-ready symbol ───────────────
+    ready_symbols = [c["symbol"] for c in candidates_raw if c["has_local_data"]]
+    if ready_symbols:
+        bar_rows = (
+            await db.execute(
+                select(
+                    MarketBarDaily.symbol,
+                    MarketBarDaily.trade_date,
+                    MarketBarDaily.close,
+                )
+                .where(MarketBarDaily.symbol.in_(ready_symbols))
+                .order_by(MarketBarDaily.symbol, MarketBarDaily.trade_date)
+            )
+        ).all()
+        series: dict[str, list[tuple[str, float]]] = {}
+        for row in bar_rows:
+            if row.close is None or row.close <= 0:
+                continue
+            series.setdefault(row.symbol, []).append((row.trade_date, float(row.close)))
+
+        for c in candidates_raw:
+            pts = series.get(c["symbol"]) or []
+            if len(pts) < 2:
+                continue
+            # Annualized volatility from daily log returns (use the last
+            # `momentum_window_days` worth of bars so the user can probe
+            # different windows).
+            window = max(payload.momentum_window_days, 20)
+            tail = pts[-min(len(pts), window + 1):]
+            rets: list[float] = []
+            for i in range(1, len(tail)):
+                p0, p1 = tail[i - 1][1], tail[i][1]
+                if p0 > 0 and p1 > 0:
+                    rets.append(math.log(p1 / p0))
+            if rets:
+                mean = sum(rets) / len(rets)
+                var = sum((r - mean) ** 2 for r in rets) / max(len(rets) - 1, 1)
+                c["volatility"] = math.sqrt(var) * math.sqrt(252)
+                c["momentum"] = (tail[-1][1] / tail[0][1]) - 1.0
+
+    # ── Apply three-step filter ──────────────────────────────────────────
     if not candidates_raw:
         return UniverseSuggestOut(
             symbols=[], candidates=[], diversityScore=0.0, coverageDays=0,
-            recommendation="未能获取市场标的列表（AKShare 网络异常）且本地无行情数据，请检查网络或先通过「数据」模块导入行情。",
+            recommendation="未能获取市场标的列表（AKShare 网络异常）且本地无行情数据，请检查网络或先通过「行情与合规」屏（侧边栏 Control 区）导入行情。",
         )
 
-    # Sort: local-data-ready first, then by index weight. The UI controls are
-    # hard constraints, not hints: only symbols with enough local bars are
-    # eligible, and final selection is capped / filled to max_symbols.
-    candidates_raw.sort(key=lambda c: (-int(c["has_local_data"]), -c["weight"]))
-    eligible_candidates = [
-        c for c in candidates_raw
-        if c["has_local_data"] and int(c.get("bars") or 0) >= payload.min_bars
-    ]
+    eligible_candidates: list[dict] = []
+    rejected_preview: list[dict] = []
+    # Bottleneck histogram — tells the user which step rejected the most.
+    drop_bucket: dict[str, int] = {
+        "no_data": 0, "bars": 0, "turnover": 0,
+        "vol_low": 0, "vol_high": 0, "mom_low": 0, "mom_high": 0,
+    }
+    for c in candidates_raw:
+        if not c["has_local_data"]:
+            c["drop_reason"] = "本地无历史行情数据"
+            c["drop_step"] = "no_data"
+            drop_bucket["no_data"] += 1
+            rejected_preview.append(c)
+            continue
+        if int(c.get("bars") or 0) < payload.min_bars:
+            c["drop_reason"] = f"K线 {c['bars']} 根 < 最少 {payload.min_bars} 根"
+            c["drop_step"] = "bars"
+            drop_bucket["bars"] += 1
+            rejected_preview.append(c)
+            continue
+        if float(c.get("avg_turnover") or 0) < payload.min_avg_turnover_cny:
+            c["drop_reason"] = (
+                f"日均成交额 {c['avg_turnover'] / 1e8:.2f}亿 < 门槛 "
+                f"{payload.min_avg_turnover_cny / 1e8:.2f}亿"
+            )
+            c["drop_step"] = "turnover"
+            drop_bucket["turnover"] += 1
+            rejected_preview.append(c)
+            continue
+        vol = float(c.get("volatility") or 0)
+        if vol < payload.min_volatility:
+            c["drop_reason"] = f"年化波动 {vol * 100:.1f}% < 下限 {payload.min_volatility * 100:.1f}%"
+            c["drop_step"] = "vol_low"
+            drop_bucket["vol_low"] += 1
+            rejected_preview.append(c)
+            continue
+        if vol > payload.max_volatility:
+            c["drop_reason"] = f"年化波动 {vol * 100:.1f}% > 上限 {payload.max_volatility * 100:.1f}%"
+            c["drop_step"] = "vol_high"
+            drop_bucket["vol_high"] += 1
+            rejected_preview.append(c)
+            continue
+        mom = float(c.get("momentum") or 0)
+        if mom < payload.min_momentum:
+            c["drop_reason"] = (
+                f"近 {payload.momentum_window_days} 日动量 {mom * 100:.1f}% < 下限 "
+                f"{payload.min_momentum * 100:.1f}%"
+            )
+            c["drop_step"] = "mom_low"
+            drop_bucket["mom_low"] += 1
+            rejected_preview.append(c)
+            continue
+        if mom > payload.max_momentum:
+            c["drop_reason"] = (
+                f"近 {payload.momentum_window_days} 日动量 {mom * 100:.1f}% > 上限 "
+                f"{payload.max_momentum * 100:.1f}%"
+            )
+            c["drop_step"] = "mom_high"
+            drop_bucket["mom_high"] += 1
+            rejected_preview.append(c)
+            continue
+        eligible_candidates.append(c)
+
+    def _bottleneck_hint() -> str:
+        """Return a one-sentence diagnosis of the dominant rejection reason."""
+        if not rejected_preview:
+            return ""
+        worst = max(drop_bucket.items(), key=lambda kv: kv[1])
+        if worst[1] == 0:
+            return ""
+        bucket_label = {
+            "no_data":  "本地无历史行情数据 — 在「行情与合规」屏（侧边栏 Control 区）同步对应标的",
+            "bars":     f"K 线数不足 — 降低「最少 K 线」门槛（当前 {payload.min_bars}）",
+            "turnover": f"日均成交额不达标 — 降低门槛（当前 {payload.min_avg_turnover_cny / 1e8:.2f} 亿）",
+            "vol_low":  f"波动率偏低 — 调低下限（当前 {payload.min_volatility * 100:.0f}%）",
+            "vol_high": f"波动率偏高 — 调高上限（当前 {payload.max_volatility * 100:.0f}%）",
+            "mom_low":  f"动量偏低 — 调低下限（当前 {payload.min_momentum * 100:.0f}%）",
+            "mom_high": f"动量偏高 — 调高上限（当前 {payload.max_momentum * 100:.0f}%）",
+        }[worst[0]]
+        pct = worst[1] * 100 // max(len(rejected_preview), 1)
+        return f"最大瓶颈：{pct}% 因「{bucket_label}」被剔除"
+
+    # Rank eligibles per strategy family so changing strategy_family also
+    # changes ordering (and therefore the LLM context + heuristic fallback).
+    if payload.strategy_family == "momentum":
+        eligible_candidates.sort(key=lambda c: -float(c.get("momentum") or 0))
+    elif payload.strategy_family == "mean_reversion":
+        eligible_candidates.sort(key=lambda c: -float(c.get("volatility") or 0))
+    else:  # trend / default
+        eligible_candidates.sort(
+            key=lambda c: (-float(c.get("avg_turnover") or 0), -c.get("weight", 0))
+        )
+
     target_count = min(payload.max_symbols, len(eligible_candidates))
     if target_count == 0:
         preview = [
             UniverseCandidate(
                 symbol=c["symbol"],
                 name=c.get("name") or None,
-                bars=c["bars"],
-                startDate=c["start_date"] or "—",
-                endDate=c["end_date"] or "—",
-                coverageDays=c["coverage_days"],
+                bars=c.get("bars") or 0,
+                startDate=c.get("start_date") or "—",
+                endDate=c.get("end_date") or "—",
+                coverageDays=c.get("coverage_days") or 0,
                 selected=False,
-                reason=f"本地K线 {c['bars']} 根，低于最少 {payload.min_bars} 根门槛",
+                reason=c.get("drop_reason"),
+                avgTurnover=c.get("avg_turnover"),
+                volatility=c.get("volatility"),
+                momentum=c.get("momentum"),
+                dropReason=c.get("drop_reason"),
             )
-            for c in candidates_raw[:60]
+            for c in rejected_preview[:60]
         ]
+        bottleneck = _bottleneck_hint()
         return UniverseSuggestOut(
             symbols=[],
             candidates=preview,
+            totalPool=len(candidates_raw),
+            totalEligible=0,
+            totalRejected=len(rejected_preview),
             diversityScore=0.0,
             coverageDays=0,
-            recommendation=f"没有标的满足最少 {payload.min_bars} 根K线要求，请降低门槛或先导入更多行情数据。",
+            recommendation=(
+                f"三步筛选未保留任何标的（候选 {len(candidates_raw)} / 被拒 {len(rejected_preview)}）。"
+                + (f" {bottleneck}。" if bottleneck else "")
+                + " 请放宽对应阈值，"
+                "或先在「行情与合规」屏（侧边栏 Control 区）导入更多行情。"
+            ),
         )
 
-    # ── Step 3: build LLM prompt ──────────────────────────────────────────
+    # ── LLM picks final pool from filtered candidates ────────────────────
     strategy_desc = {
-        "trend": "趋势跟踪（双均线）：偏好趋势明显、流动性高、权重较大的蓝筹标的",
-        "momentum": "横截面动量：偏好指数权重分散、行业覆盖广的多标的池",
-        "mean_reversion": "均值回归：偏好波动性较高、行业分散的标的",
+        "trend": "趋势跟踪（双均线）：偏好流动性高、波动适中、动量正向的趋势标的",
+        "momentum": "横截面动量：偏好近期动量靠前、流动性充足、波动可控的标的",
+        "mean_reversion": "均值回归：偏好波动较大、近期超跌或超涨的标的",
     }.get(payload.strategy_family, f"量化策略（{payload.strategy_family}）")
 
     context_symbols = eligible_candidates[:60]
     extra = len(eligible_candidates) - len(context_symbols)
 
     def _row_line(c: dict) -> str:
-        data_tag = f"本地数据:{c['bars']}根K线({c['start_date']}~{c['end_date']})" if c["has_local_data"] else "需导入数据"
-        return f"  {c['symbol']} {c['name']}: 指数权重{c['weight']:.3f}%, {data_tag}"
+        return (
+            f"  {c['symbol']} {c.get('name', '')}: "
+            f"指数权重{c.get('weight', 0):.3f}%, "
+            f"K线{c['bars']}根, "
+            f"日均成交额 {(c.get('avg_turnover') or 0) / 1e8:.2f}亿, "
+            f"年化波动 {(c.get('volatility') or 0) * 100:.1f}%, "
+            f"近{payload.momentum_window_days}日动量 {(c.get('momentum') or 0) * 100:.1f}%"
+        )
 
     symbol_table = "\n".join(_row_line(c) for c in context_symbols)
 
-    prompt = f"""以下是已通过数据门槛的沪深300+中证500成分股（共{len(eligible_candidates)}个），含指数权重和本地历史数据状态：
+    prompt = f"""以下是已通过【三步选股法】筛选的候选标的（共 {len(eligible_candidates)} 个）。
+每一行包含流动性、波动率、动量等关键指标：
 
 {symbol_table}
 {"（另有 " + str(extra) + " 个标的未展示）" if extra else ""}
 
+筛选条件（用户已设定）：
+- 指数池：{payload.index_pool}
+- 最少 K 线：{payload.min_bars} 根
+- 日均成交额下限：{payload.min_avg_turnover_cny / 1e8:.2f} 亿元
+- 年化波动率区间：[{payload.min_volatility * 100:.1f}%, {payload.max_volatility * 100:.1f}%]
+- 近 {payload.momentum_window_days} 日动量区间：[{payload.min_momentum * 100:.1f}%, {payload.max_momentum * 100:.1f}%]
+
 策略构建需求：
 - 策略类型：{strategy_desc}
 - 目标标的数：{target_count} 个（不得超过此数量）
-- 最少K线门槛：{payload.min_bars} 根（候选池已过滤）
 - 多样性要求：{"是，避免过度集中在单一行业" if payload.diversify else "否"}
 
-注意：只能从上方候选池中选择；这些标的均有本地数据并可立即回测。
-对每个选中标的，给出1-2句理由（聚焦行业分散性、策略适配性，禁止基于历史涨跌推荐）。
-对主要排除标的给出1句理由。最后给出整体股票池构建逻辑（2-3句）。"""
+只能从上方候选池中选择；这些标的均已通过三步过滤。
+对每个选中标的，给出 1-2 句理由（聚焦行业分散性、策略适配性、关键指标），禁止基于"过去涨得多"推荐。
+对主要排除标的给出 1 句理由。最后给出整体股票池构建逻辑（2-3 句）。"""
 
-    # ── Step 4: call LLM ─────────────────────────────────────────────────
     llm_result: dict | None = None
     ai_model: str | None = None
     try:
@@ -373,10 +628,10 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
     except Exception:
         llm_result = None
 
-    # ── Step 5: merge LLM decisions ──────────────────────────────────────
     symbol_map = {c["symbol"]: c for c in eligible_candidates}
     reason_map: dict[str, str] = {}
     selected_symbols: list[str] = []
+    ai_rationale: str | None = None
 
     if llm_result and isinstance(llm_result.get("selected"), list) and llm_result["selected"]:
         for item in llm_result["selected"]:
@@ -390,80 +645,146 @@ async def suggest_universe(payload: UniverseSuggestIn, db: DbSession) -> Univers
                 reason_map[sym] = item.get("reason", "AI 未推荐")
         ai_rationale = llm_result.get("rationale") or llm_result.get("diversity_note")
     else:
-        # Heuristic fallback: prefer data-ready, then by weight
         for c in eligible_candidates:
             if len(selected_symbols) >= target_count:
                 break
             selected_symbols.append(c["symbol"])
-            reason_map[c["symbol"]] = f"本地数据 {c['bars']} 根满足门槛，指数权重 {c['weight']:.3f}%，可立即进入回测"
-        ai_rationale = None
+            reason_map[c["symbol"]] = (
+                f"按三步排序入选：K线 {c['bars']} 根 / 日均成交 "
+                f"{(c.get('avg_turnover') or 0) / 1e8:.2f}亿 / 波动 "
+                f"{(c.get('volatility') or 0) * 100:.1f}% / 动量 "
+                f"{(c.get('momentum') or 0) * 100:.1f}%"
+            )
         ai_model = None
 
-    # If the model returns fewer than target_count, deterministically fill from
-    # eligible candidates so maxSymbols visibly controls the resulting pool.
+    # Deterministically fill to target_count from the ranked eligibles.
     for c in eligible_candidates:
         if len(selected_symbols) >= target_count:
             break
         if c["symbol"] in selected_symbols:
             continue
         selected_symbols.append(c["symbol"])
-        reason_map[c["symbol"]] = (
-            f"按数据质量补齐：本地K线 {c['bars']} 根，覆盖 {c['coverage_days']} 天，满足当前参数门槛"
+        reason_map.setdefault(
+            c["symbol"],
+            f"按当前排序补齐：动量 {(c.get('momentum') or 0) * 100:.1f}% / "
+            f"波动 {(c.get('volatility') or 0) * 100:.1f}%",
         )
 
     selected_set = set(selected_symbols)
-    candidates: list[UniverseCandidate] = []
-    exposed = eligible_candidates
-    for c in exposed:
-        start = c["start_date"] or "—"
-        end = c["end_date"] or "—"
-        candidates.append(UniverseCandidate(
+
+    def _candidate_out(c: dict, selected: bool, reason: str | None) -> UniverseCandidate:
+        return UniverseCandidate(
             symbol=c["symbol"],
             name=c.get("name") or None,
-            bars=c["bars"],
-            startDate=start,
-            endDate=end,
-            coverageDays=c["coverage_days"],
-            selected=c["symbol"] in selected_set,
-            reason=reason_map.get(c["symbol"]),
-        ))
+            bars=c.get("bars") or 0,
+            startDate=c.get("start_date") or "—",
+            endDate=c.get("end_date") or "—",
+            coverageDays=c.get("coverage_days") or 0,
+            selected=selected,
+            reason=reason,
+            avgTurnover=c.get("avg_turnover"),
+            volatility=c.get("volatility"),
+            momentum=c.get("momentum"),
+            dropReason=c.get("drop_reason"),
+        )
 
-    # ── Step 6: diversity score ───────────────────────────────────────────
+    candidates: list[UniverseCandidate] = []
+    for c in eligible_candidates:
+        candidates.append(
+            _candidate_out(c, c["symbol"] in selected_set, reason_map.get(c["symbol"]))
+        )
+    # Show top rejected so the user can see why a stock didn't make it.
+    # For full-market scans there can be thousands of rejected candidates; cap
+    # at 50 to keep the UI responsive while still surfacing the rejection mix.
+    rejected_cap = 50 if payload.index_pool == "all" else 20
+    for c in rejected_preview[:rejected_cap]:
+        candidates.append(_candidate_out(c, False, c.get("drop_reason")))
+
     n = len(selected_symbols)
     if n > 0:
-        sel_meta = [c for c in candidates_raw if c["symbol"] in selected_set]
-        data_ready = sum(1 for c in sel_meta if c["has_local_data"])
-        avg_weight = sum(c["weight"] for c in sel_meta) / n
+        sel_meta = [symbol_map[s] for s in selected_symbols]
+        avg_weight = sum(c.get("weight", 0) for c in sel_meta) / n
         diversity_score = round(
             min(n / payload.max_symbols, 1.0) * 0.5
             + (1 - min(avg_weight / 5.0, 1.0)) * 0.5,
             2,
         )
-        start_dates = [c["start_date"] for c in sel_meta if c["start_date"]]
-        end_dates = [c["end_date"] for c in sel_meta if c["end_date"]]
-        coverage_days = max(
-            (_date.fromisoformat(max(end_dates)) - _date.fromisoformat(min(start_dates))).days, 0
-        ) if start_dates and end_dates else 0
+        start_dates = [c.get("start_date") for c in sel_meta if c.get("start_date")]
+        end_dates = [c.get("end_date") for c in sel_meta if c.get("end_date")]
+        coverage_days = (
+            max(
+                (_date.fromisoformat(max(end_dates))
+                 - _date.fromisoformat(min(start_dates))).days,
+                0,
+            )
+            if start_dates and end_dates else 0
+        )
     else:
         diversity_score = 0.0
         coverage_days = 0
-        data_ready = 0
 
+    no_data_count = sum(
+        1 for c in rejected_preview if c.get("drop_reason") == "本地无历史行情数据"
+    )
     rec = ai_rationale or (
-        f"AI 推荐 {n} 个沪深300/中证500成分股；其中 {data_ready} 个本地数据已就绪可立即回测，"
-        f"其余 {n - data_ready} 个需先通过「数据」模块同步历史行情。"
-        if n > 0 else "未能生成推荐，请检查网络连接后重试。"
+        f"按三步选股法保留 {n} 个标的（全市场候选 {len(candidates_raw)} / "
+        f"通过三步 {len(eligible_candidates)} / 被拒 {len(rejected_preview)}"
+        + (f"，其中 {no_data_count} 个本地无数据" if no_data_count else "")
+        + "）。可调整流动性 / 波动 / 动量阈值再生成。"
+        if n > 0 else (
+            f"全市场候选 {len(candidates_raw)}，其中 {no_data_count} 个本地无数据。"
+            "请放宽筛选条件，或先在「行情与合规」屏（侧边栏 Control 区）同步更多行情。"
+            if no_data_count else "未能生成推荐，请放宽筛选条件或导入更多行情数据。"
+        )
     )
 
     return UniverseSuggestOut(
         symbols=selected_symbols,
         candidates=candidates,
+        totalPool=len(candidates_raw),
+        totalEligible=len(eligible_candidates),
+        totalRejected=len(rejected_preview),
         diversityScore=diversity_score,
         coverageDays=coverage_days,
         recommendation=rec,
         aiRationale=ai_rationale,
         aiModel=ai_model,
     )
+
+
+@router.get("/universe/sectors")
+async def list_universe_sectors() -> list[dict[str, str | int]]:
+    """Return the available 申万 industry-board names for the universe builder.
+
+    Cached in-process for 10 minutes — the list rarely changes and the AKShare
+    call is ~1-2s.
+    """
+    import asyncio as _asyncio
+    import time as _time
+
+    cache: dict = getattr(list_universe_sectors, "_cache", {})
+    now = _time.time()
+    if cache and now - cache.get("ts", 0) < 600:
+        return cache["items"]
+    try:
+        import akshare as ak
+        df = await _asyncio.to_thread(ak.stock_board_industry_name_em)
+        if df is None or df.empty:
+            return []
+        items: list[dict[str, str | int]] = []
+        for _, row in df.iterrows():
+            name = str(row.get("板块名称", "")).strip()
+            if not name:
+                continue
+            items.append({
+                "name": name,
+                "count": int(row.get("公司家数", 0) or 0),
+            })
+        items.sort(key=lambda x: -int(x["count"]))
+        list_universe_sectors._cache = {"ts": now, "items": items}  # type: ignore[attr-defined]
+        return items
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @router.get("/overview", response_model=BacktestScreen)
@@ -488,7 +809,10 @@ async def create_backtest_task(
     """Create, execute and persist a research backtest task."""
     engine = DailyBacktestEngine(db)
     try:
-        result = await engine.run_and_persist(_daily_backtest_config(payload))
+        result = await engine.run_and_persist(
+            _daily_backtest_config(payload),
+            strategy_version_id=payload.strategy_id,
+        )
     except (BacktestDataError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _result_out(result)
@@ -509,11 +833,16 @@ async def create_sensitivity_analysis(
         initial_cash=payload.initial_cash,
         strategy_params=payload.strategy_params,
         cost_config=_cost_config(payload.cost_config),
+        in_sample_end_date=payload.in_sample_end_date,
     )
     try:
-        baseline = await engine.run_and_persist(config)
+        baseline = await engine.run_and_persist(
+            config, strategy_version_id=payload.strategy_id
+        )
         assert baseline.run_id is not None
-        summaries = await run_sensitivity_analysis(engine, config, parent_run_id=baseline.run_id)
+        summaries = await run_sensitivity_analysis(
+            engine, config, parent_run_id=baseline.run_id, baseline_result=baseline
+        )
     except (BacktestDataError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -552,10 +881,14 @@ async def create_walk_forward_backtest(
         initial_cash=payload.initial_cash,
         strategy_params=payload.strategy_params,
         cost_config=_cost_config(payload.cost_config),
+        in_sample_end_date=payload.in_sample_end_date,
     )
     try:
         result, summaries = await engine.run_walk_forward(
-            config, folds=payload.folds, train_ratio=payload.train_ratio
+            config,
+            folds=payload.folds,
+            train_ratio=payload.train_ratio,
+            strategy_version_id=payload.strategy_id,
         )
     except (BacktestDataError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

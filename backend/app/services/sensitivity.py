@@ -17,6 +17,7 @@ from app.services.daily_backtest import (
     BacktestMetrics,
     DailyBacktestConfig,
     DailyBacktestEngine,
+    DailyBacktestResult,
 )
 
 
@@ -51,6 +52,61 @@ def _dual_ma_param_variants(strategy_params: dict[str, Any]) -> list[tuple[str, 
     return out
 
 
+def _momentum_param_variants(strategy_params: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Sweep lookback / skip / max_positions around momentum baseline."""
+    lookback = int(strategy_params.get("lookback", 20))
+    skip = int(strategy_params.get("skip", 1))
+    max_pos = int(strategy_params.get("max_positions", 5))
+    out: list[tuple[str, dict[str, Any]]] = []
+    for new_lb in {max(5, lookback - 5), max(5, lookback - 10), lookback + 5, lookback + 10}:
+        if new_lb == lookback:
+            continue
+        variant = {**strategy_params, "lookback": new_lb}
+        out.append((f"lookback={new_lb}", variant))
+    for new_skip in {max(0, skip - 1), skip + 1, skip + 2}:
+        if new_skip == skip:
+            continue
+        variant = {**strategy_params, "skip": new_skip}
+        out.append((f"skip={new_skip}", variant))
+    for new_max in {max(1, max_pos - 2), max_pos + 2, max_pos + 5}:
+        if new_max == max_pos:
+            continue
+        variant = {**strategy_params, "max_positions": new_max}
+        out.append((f"max_positions={new_max}", variant))
+    return out
+
+
+def _mean_reversion_param_variants(strategy_params: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Sweep lookback / z_threshold around mean-reversion baseline."""
+    lookback = int(strategy_params.get("lookback", 20))
+    z = float(strategy_params.get("z_threshold", 1.5))
+    out: list[tuple[str, dict[str, Any]]] = []
+    for new_lb in {max(5, lookback - 5), max(5, lookback - 10), lookback + 5, lookback + 10}:
+        if new_lb == lookback:
+            continue
+        variant = {**strategy_params, "lookback": new_lb}
+        out.append((f"lookback={new_lb}", variant))
+    for delta in (-0.5, -0.25, 0.25, 0.5):
+        new_z = round(max(0.5, z + delta), 2)
+        if new_z == z:
+            continue
+        variant = {**strategy_params, "z_threshold": new_z}
+        out.append((f"z_threshold={new_z}", variant))
+    return out
+
+
+def _param_variants(
+    strategy_name: str, strategy_params: dict[str, Any]
+) -> list[tuple[str, dict[str, Any]]]:
+    if strategy_name == "dual_ma":
+        return _dual_ma_param_variants(strategy_params)
+    if strategy_name == "momentum":
+        return _momentum_param_variants(strategy_params)
+    if strategy_name == "mean_reversion":
+        return _mean_reversion_param_variants(strategy_params)
+    return []
+
+
 def _slippage_variants(baseline_bps: float) -> list[tuple[str, float]]:
     """Five-point slippage sweep around the baseline."""
     candidates = sorted({0.0, max(0.0, baseline_bps - 5), baseline_bps, baseline_bps + 5, baseline_bps + 20})
@@ -62,16 +118,19 @@ async def run_sensitivity_analysis(
     config: DailyBacktestConfig,
     *,
     parent_run_id: str,
+    baseline_result: DailyBacktestResult | None = None,
 ) -> list[SensitivitySummary]:
     """Persist baseline + perturbation rows for the supplied config.
 
     The baseline must already correspond to ``parent_run_id`` (the caller runs it).
-    This function only runs the perturbations and writes ``SensitivityRun`` rows.
+    When the caller already has the baseline result it should pass it via
+    ``baseline_result`` to avoid running the baseline twice.
     """
     summaries: list[SensitivitySummary] = []
 
-    # Re-run baseline once with raw engine.run() so metrics shape is identical.
-    baseline_result = await engine.run(config)
+    # Reuse the caller's baseline if provided — otherwise run it once.
+    if baseline_result is None:
+        baseline_result = await engine.run(config)
     summaries.append(
         SensitivitySummary(
             kind="param",
@@ -82,18 +141,16 @@ async def run_sensitivity_analysis(
         )
     )
 
-    # Parameter sweep (only meaningful for dual_ma right now).
-    if config.strategy_name == "dual_ma":
-        for label, variant in _dual_ma_param_variants(dict(config.strategy_params)):
-            try:
-                r = await engine.run(replace(config, strategy_params=variant))
-            except Exception:  # noqa: BLE001
-                continue
-            summaries.append(
-                SensitivitySummary(
-                    kind="param", label=label, variant=variant, is_baseline=False, metrics=r.metrics
-                )
+    for label, variant in _param_variants(config.strategy_name, dict(config.strategy_params)):
+        try:
+            r = await engine.run(replace(config, strategy_params=variant))
+        except Exception:  # noqa: BLE001
+            continue
+        summaries.append(
+            SensitivitySummary(
+                kind="param", label=label, variant=variant, is_baseline=False, metrics=r.metrics
             )
+        )
 
     # Slippage sweep.
     baseline_cost = config.cost_config

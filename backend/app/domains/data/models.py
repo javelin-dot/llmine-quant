@@ -66,6 +66,25 @@ class MarketBarDaily(BaseModel):
     can_sell: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class StockInfo(BaseModel):
+    """Per-symbol metadata (Chinese name, board, ST flag) used for display joins.
+
+    Populated from AKShare ``stock_zh_a_spot`` snapshots (Full Market Sync or the
+    standalone refresh endpoint). One row per ``symbol``.
+    """
+
+    __tablename__ = "stock_info"
+    __table_args__ = (
+        UniqueConstraint("symbol", name="uq_stock_info_symbol"),
+    )
+
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    board: Mapped[str | None] = mapped_column(String(16), nullable=True)  # main / chinext / star / bse
+    is_st: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class CorporateAction(BaseModel):
     """Corporate actions for adjustment (splits, dividends)."""
 

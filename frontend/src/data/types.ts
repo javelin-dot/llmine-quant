@@ -43,6 +43,23 @@ export interface MockData {
     }[]
     pendingApprovals: number
   }
+  agentWorkflow: {
+    presets: {
+      id: string
+      name: string
+      description: string
+      steps: {
+        id: string
+        avatar: string
+        roleKey: string
+        displayName: string
+        objective: string
+        downstreamHint: string
+        autonomy: 'autonomous' | 'supervised' | 'human_gate'
+        gates: string[]
+      }[]
+    }[]
+  }
   strategy: {
     pipelineStatus: { stage: string; count: number; tone: 'blue' | 'green' | 'yellow' | 'purple' | 'red' }[]
     templates: { id: string; name: string; risk: 'conservative' | 'balanced' | 'aggressive'; market: string; family: string; desc: string }[]
@@ -383,6 +400,14 @@ export interface MockData {
       status: 'resolved' | 'ongoing' | 'review'
       statusTone: 'green' | 'yellow' | 'red'
     }[]
+    complianceGates: {
+      title: string
+      desc: string
+      status: 'pass' | 'watch' | 'fail' | 'enforced'
+      statusTone: 'green' | 'yellow' | 'red' | 'blue'
+      lastCheck: string
+      note: string
+    }[]
   }
   data: {
     header: {
@@ -437,14 +462,6 @@ export interface MockData {
       live: number[]
       slaMs: number
     }
-    biasGate: {
-      title: string
-      desc: string
-      status: 'pass' | 'watch' | 'fail' | 'enforced'
-      statusTone: 'green' | 'yellow' | 'red' | 'blue'
-      lastCheck: string
-      note: string
-    }[]
     lineage: {
       nodes: {
         id: string

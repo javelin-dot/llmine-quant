@@ -8,6 +8,7 @@ import AgentMatrix from './AgentMatrix'
 import AlertQueue from './AlertQueue'
 import StrategyGrid from './StrategyGrid'
 import QuickActions from './QuickActions'
+import DashboardSystemBar from './DashboardSystemBar'
 
 interface DashboardProps {
   onNavigate?: (target: string) => void
@@ -28,6 +29,7 @@ export default function Dashboard({ onNavigate, onModal }: DashboardProps) {
   return (
     <DashboardProvider value={data}>
       <div className="dashboard-root">
+        <DashboardSystemBar onModal={onModal} />
         <MarketBar />
         <div className="dashboard-main">
           <div className="dashboard-main-left">

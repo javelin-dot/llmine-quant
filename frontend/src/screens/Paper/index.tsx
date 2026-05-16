@@ -14,6 +14,7 @@ import * as echarts from 'echarts'
 interface PaperProps {
   onNavigate?: (target: string) => void
   onModal?: (target: string) => void
+  initialAccountId?: string
 }
 
 function fmtPct(v: number | null | undefined, d = 2): string {
@@ -365,10 +366,9 @@ function AccountDetail({ accountId }: { accountId: string }) {
 
 // ── Main Screen ──────────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export default function Paper(_props: PaperProps) {
+export default function Paper({ initialAccountId }: PaperProps) {
   const [accounts, setAccounts] = useState<PaperAccount[]>([])
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(initialAccountId ?? null)
   const [showCreate, setShowCreate] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -376,11 +376,24 @@ export default function Paper(_props: PaperProps) {
     const list = await api.paper.listAccounts().catch(() => [] as PaperAccount[])
     setAccounts(list)
     setLoading(false)
-    if (list.length) setSelected((prev) => prev ?? list[0].id)
+    setSelected((prev) => prev ?? list[0]?.id ?? null)
   }, [])
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void loadAccounts() }, [loadAccounts])
+
+  // Honor late-arriving initialAccountId (e.g. account was just created in
+  // another screen and we navigated here). Switch only if it exists in the list,
+  // and re-fetch when it's missing so freshly created accounts surface.
+  useEffect(() => {
+    if (!initialAccountId) return
+    if (accounts.some((a) => a.id === initialAccountId)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelected(initialAccountId)
+    } else if (!loading) {
+      void loadAccounts()
+    }
+  }, [initialAccountId, accounts, loading, loadAccounts])
 
   const onCreated = (acc: PaperAccount) => {
     setAccounts((prev) => [acc, ...prev])

@@ -13,9 +13,11 @@ from app.domains.data.models import (
     LineageEdge,
     LineageNode,
     MarketBarDaily,
+    StockInfo,
 )
+from datetime import date, timedelta
+
 from app.domains.data.schemas import (
-    BiasGate,
     DataIncidentOut,
     DataOverview,
     DataScreen,
@@ -30,8 +32,20 @@ from app.domains.data.schemas import (
     MarketDataAkshareImportIn,
     MarketDataCsvImportIn,
     MarketDataImportSummary,
+    MarketSyncStart,
+    MarketSyncStatus,
     RunLineageOut,
+    StockInfoRefreshOut,
+    SymbolStatsOut,
     SymbolSummary,
+)
+from app.services.market_data_full_sync import (
+    AlreadyRunningError,
+    FullSyncRequest,
+    _fetch_market_symbols,
+    current_status,
+    start_full_sync,
+    upsert_stock_info,
 )
 from app.services.market_data_import import (
     MarketDataImportError,
@@ -93,14 +107,6 @@ _LATENCY_TREND = LatencyTrend(
     slaMs=500,
 )
 
-_BIAS_GATES = [
-    BiasGate(title="未来函数检测", desc="检查特征计算是否使用未来数据", status="pass", statusTone="green", lastCheck="10 min ago", note="无异常"),
-    BiasGate(title="幸存者偏差", desc="检查是否排除已退市股票", status="pass", statusTone="green", lastCheck="15 min ago", note="ST/退市标记完整"),
-    BiasGate(title="数据完整性", desc="检查关键字段缺失率", status="pass", statusTone="green", lastCheck="5 min ago", note="缺失率 < 0.1%"),
-    BiasGate(title="数据及时性", desc="检查行情延迟是否在 SLA 内", status="watch", statusTone="yellow", lastCheck="1 min ago", note="Wind 数据源延迟偏高"),
-    BiasGate(title="数据一致性", desc="交叉验证多源数据一致性", status="pass", statusTone="green", lastCheck="20 min ago", note="偏差 < 0.1%"),
-]
-
 _LINEAGE = LineageOut(
     nodes=[
         LineageNodeOut(id="n1", label="AKShare Raw", tier="raw", tone="blue", version="v2.1.0", permission="read"),
@@ -140,7 +146,6 @@ async def get_data_overview(db: DbSession) -> DataScreen:
         kpis=_KPIS,
         sources=_SOURCES,
         latencyTrend=_LATENCY_TREND,
-        biasGate=_BIAS_GATES,
         lineage=_LINEAGE,
         incidents=_INCIDENTS,
     )
@@ -197,9 +202,16 @@ async def list_market_bars(
     symbol: str | None = None,
     start_date: str | None = Query(default=None, alias="startDate"),
     end_date: str | None = Query(default=None, alias="endDate"),
-    limit: int = Query(default=1000, ge=1, le=5000),
+    limit: int = Query(default=10, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
+    order: str = Query(default="desc", pattern="^(asc|desc)$"),
 ) -> list[MarketBarDailyOut]:
-    """Return persisted daily market bars for research inspection."""
+    """Return persisted daily market bars for research inspection.
+
+    Supports cursor-style pagination via ``offset`` + ``limit``.
+    Default ordering is by ``trade_date DESC`` so the latest bars come first,
+    which matches the Local Market Library detail panel (newest on top).
+    """
     query = select(MarketBarDaily)
     if symbol:
         query = query.where(MarketBarDaily.symbol == symbol.upper())
@@ -207,7 +219,11 @@ async def list_market_bars(
         query = query.where(MarketBarDaily.trade_date >= start_date)
     if end_date:
         query = query.where(MarketBarDaily.trade_date <= end_date)
-    result = await db.execute(query.order_by(MarketBarDaily.symbol, MarketBarDaily.trade_date).limit(limit))
+    if order == "asc":
+        query = query.order_by(MarketBarDaily.symbol, MarketBarDaily.trade_date.asc())
+    else:
+        query = query.order_by(MarketBarDaily.symbol, MarketBarDaily.trade_date.desc())
+    result = await db.execute(query.offset(offset).limit(limit))
     return [_market_bar_out(row) for row in result.scalars().all()]
 
 
@@ -223,30 +239,96 @@ async def get_lineage() -> LineageOut:
     return _LINEAGE
 
 
-@router.get("/symbols", response_model=list[SymbolSummary])
-async def list_market_symbols(db: DbSession, limit: int = 500) -> list[SymbolSummary]:
-    """List distinct symbols that have bars in the local DB, with coverage info."""
-    stmt = (
-        select(
-            MarketBarDaily.symbol.label("symbol"),
-            func.count(MarketBarDaily.id).label("bars"),
-            func.min(MarketBarDaily.trade_date).label("start_date"),
-            func.max(MarketBarDaily.trade_date).label("end_date"),
-        )
-        .group_by(MarketBarDaily.symbol)
-        .order_by(func.count(MarketBarDaily.id).desc())
-        .limit(limit)
+@router.get("/symbols/stats", response_model=SymbolStatsOut)
+async def get_symbols_stats(db: DbSession) -> SymbolStatsOut:
+    """Whole-database KPI for Local Market Library (NOT capped by symbol pagination).
+
+    Returns total distinct symbols, total bar rows and the latest trade date
+    across the entire ``market_bars_daily`` table.
+    """
+    stmt = select(
+        func.count(func.distinct(MarketBarDaily.symbol)).label("total_symbols"),
+        func.count(MarketBarDaily.id).label("total_bars"),
+        func.max(MarketBarDaily.trade_date).label("latest_trade_date"),
+        func.min(MarketBarDaily.trade_date).label("earliest_trade_date"),
     )
+    row = (await db.execute(stmt)).one()
+    return SymbolStatsOut(
+        totalSymbols=int(row.total_symbols or 0),
+        totalBars=int(row.total_bars or 0),
+        latestTradeDate=str(row.latest_trade_date) if row.latest_trade_date else None,
+        earliestTradeDate=str(row.earliest_trade_date) if row.earliest_trade_date else None,
+    )
+
+
+@router.get("/symbols", response_model=list[SymbolSummary])
+async def list_market_symbols(
+    db: DbSession,
+    search: str | None = Query(default=None, description="Filter by symbol prefix/substring (case-insensitive)"),
+    sort: str = Query(default="bars", pattern="^(bars|symbol|recent)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=5000),
+) -> list[SymbolSummary]:
+    """List distinct symbols that have bars in the local DB, with coverage info.
+
+    Supports server-side ``search`` (case-insensitive substring), ``sort``
+    (bars desc / symbol asc / recent endDate desc) and offset/limit pagination.
+    """
+    bars_count = func.count(MarketBarDaily.id).label("bars")
+    start_date = func.min(MarketBarDaily.trade_date).label("start_date")
+    end_date = func.max(MarketBarDaily.trade_date).label("end_date")
+
+    stmt = select(
+        MarketBarDaily.symbol.label("symbol"),
+        bars_count,
+        start_date,
+        end_date,
+        StockInfo.name.label("name"),
+    ).outerjoin(StockInfo, StockInfo.symbol == MarketBarDaily.symbol)
+    if search:
+        pattern = f"%{search.strip().upper()}%"
+        stmt = stmt.where(
+            (func.upper(MarketBarDaily.symbol).like(pattern))
+            | (func.coalesce(StockInfo.name, "").like(f"%{search.strip()}%"))
+        )
+    stmt = stmt.group_by(MarketBarDaily.symbol, StockInfo.name)
+
+    if sort == "symbol":
+        stmt = stmt.order_by(MarketBarDaily.symbol.asc())
+    elif sort == "recent":
+        stmt = stmt.order_by(end_date.desc(), MarketBarDaily.symbol.asc())
+    else:  # bars
+        stmt = stmt.order_by(bars_count.desc(), MarketBarDaily.symbol.asc())
+
+    stmt = stmt.offset(offset).limit(limit)
     rows = (await db.execute(stmt)).all()
     return [
         SymbolSummary(
             symbol=row.symbol,
+            name=row.name or None,
             bars=int(row.bars),
             startDate=str(row.start_date),
             endDate=str(row.end_date),
         )
         for row in rows
     ]
+
+
+@router.post("/stock-info/refresh", response_model=StockInfoRefreshOut)
+async def refresh_stock_info() -> StockInfoRefreshOut:
+    """从 AKShare 拉一次全 A 股快照并刷新 ``stock_info`` 表。
+
+    不依赖全量同步；常用于仅需补全/刷新股票中文名称的场景。
+    耗时在 5–10 秒量级，不需后台任务。
+    """
+    from datetime import datetime as _dt
+
+    scan = await _fetch_market_symbols()
+    upserted = await upsert_stock_info(scan)
+    return StockInfoRefreshOut(
+        upserted=upserted,
+        syncedAt=_dt.utcnow().isoformat() + "Z",
+    )
 
 
 @router.get("/features", response_model=list[FeatureOut])
@@ -345,10 +427,51 @@ async def get_incidents() -> list[DataIncidentOut]:
     return _INCIDENTS
 
 
-@router.get("/bias-gates", response_model=list[BiasGate])
-async def get_bias_gates() -> list[BiasGate]:
-    """Return bias gate checks."""
-    return _BIAS_GATES
+@router.post("/market-bars/sync/full", response_model=MarketSyncStatus, status_code=202)
+async def trigger_full_sync(payload: MarketSyncStart) -> MarketSyncStatus:
+    """触发全市场同步. 首次空库 = 全量, 后续按 max(trade_date) 增量."""
+    end = payload.end_date or date.today().isoformat()
+    start = payload.start_date or (date.today() - timedelta(days=365 * 5)).isoformat()
+    req = FullSyncRequest(
+        start_date=start,
+        end_date=end,
+        adjust=payload.adjust,
+        concurrency=max(1, min(16, payload.concurrency)),
+        boards=payload.boards or [],
+        incremental=payload.incremental,
+    )
+    try:
+        await start_full_sync(req)
+    except AlreadyRunningError as exc:
+        raise HTTPException(status_code=409, detail=f"sync already running: {exc}") from exc
+    return _sync_status_out()
+
+
+@router.get("/market-bars/sync/status", response_model=MarketSyncStatus)
+async def get_sync_status() -> MarketSyncStatus:
+    """前端轮询的进度端点; 任何状态都 200, 是否在跑看 isRunning 字段."""
+    return _sync_status_out()
+
+
+def _sync_status_out() -> MarketSyncStatus:
+    p = current_status()
+    return MarketSyncStatus(
+        task_id=p.task_id,
+        phase=p.phase,
+        started_at=p.started_at,
+        finished_at=p.finished_at,
+        total=p.total,
+        done=p.done,
+        skipped=p.skipped,
+        inserted_rows=p.inserted_rows,
+        updated_rows=p.updated_rows,
+        failures=p.failures,
+        rate_per_sec=p.rate_per_sec,
+        eta_seconds=p.eta_seconds,
+        last_symbol=p.last_symbol,
+        error=p.error,
+        is_running=p.is_running,
+    )
 
 
 def _import_summary(result: MarketDataImportResult) -> MarketDataImportSummary:

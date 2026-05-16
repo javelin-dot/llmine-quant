@@ -2,9 +2,9 @@
 
 ## 当前阶段
 
-- 当前阶段：Phase 4 — 模拟盘闭环（已完成）→ 即将进入 Phase 5
-- 当前目标：Phase 4 全部任务完成；下一阶段为 Phase 5 实盘前安全审批
-- 当前状态：Phase 4 全绿（86 backend pytest pass + 前端 build 通过 + live API 验证），等待 Phase 5 启动
+- 当前阶段：Agent Studio UX — Agent 模块 UI / 交互易用性设计
+- 当前目标：在已完成的 Agent Studio MVP 基础上，重构信息架构、工作流编排体验、Agent 编辑体验、验证反馈与运行调试体验
+- 当前状态：Agent Studio MVP 已完成；用户明确要求下一阶段先以 UI 交互和用户易用性为重点设计 Agent 模块
 
 ## 自动推进规则
 
@@ -28,6 +28,8 @@
 | Phase 3 | 可靠性与可解释性 | **已完成** | IS/OOS、Walk-forward、敏感性、过拟合、Feature Store、血缘、解释、报告 API、前端类型；后端 79 passed |
 | Phase 4 | 模拟盘闭环 | **已完成** | 7 张 paper_* 表 + 引擎 + API + Celery beat；后端 86 passed |
 | Phase 5 | 实盘前准备 | 未开始 | Broker 适配、HITL 审批、kill switch、审计 |
+| Agent Studio MVP | 可配置 Agent + 工作流运行 | **已完成** | 完整 Agent 配置、LangChain/LangGraph、画布编排、校验、调试、发布版本 |
+| Agent Studio UX | UI / 交互易用性设计 | **当前阶段** | 先做设计与交互收敛，再进入实现 |
 
 ## Phase 0 前端里程碑（已完成）
 
@@ -90,11 +92,11 @@
 
 ## 下一步任务
 
-Phase 4 已完成。进入 **Phase 5 实盘前准备**，按 `phase-5-live-readiness.md` 顺序执行：
+当前进入 **Agent Studio UX**，按 `phase-agent-studio-ux.md` 执行：
 
-> **Phase 5-1：抽象 broker adapter（统一下单/撤单/回报/持仓查询）。**
+> **拆分前端页面与组件。**
 >
-> 后续步骤：QMT/PTrade 占位适配 → live order draft 模型 → HITL 强制审批 → 权限分级（Research/Trader/Risk/Admin/Viewer）→ kill switch（global/strategy/account）→ 审计日志扩展 → paper-vs-live 一致性对账 → 实盘前检查清单 API → 测试覆盖审批/权限/熔断/审计。
+> 后续步骤：继续把已稳定的编辑器、时间线和 Inspector 从单文件中拆出，降低后续维护成本，再进入下一轮 Agent Studio 交互增强。
 
 ## 构建与测试命令速查
 
@@ -109,6 +111,47 @@ python -m pytest tests/ -q
 ```
 
 ## 最近记录
+
+- **2026-05-16 Agent Studio MVP**：完成 Agent 模块真实可用 MVP。
+  - **完整 Agent 定义**：模型配置、系统提示词、用户提示词模板、原始输入输出 Schema、标准化输入输出 Schema、映射、工具策略、约束、运行策略均可配置，不做简化。
+  - **技术栈落地**：Agent 运行时使用 LangChain + LangGraph；可将持久化工作流编译为可执行图。
+  - **工作流编排**：支持节点添加、删除、拖拽、连线、边映射、节点 override。
+  - **契约治理**：支持标准化输入输出展示、链路字段映射检查、发布前契约校验。
+  - **运行调试**：支持页面输入 payload、执行当前工作流、查看节点顺序与历史结果。
+  - **发布版本**：新增 workflow publish、不可变版本快照、版本列表；发布后冻结工作流 + 节点 override + Agent 定义快照；编辑后自动回到 draft。
+  - **测试与迁移**：补齐 Agent/Workflow 迁移链；新增 workflow publish API 测试；相关 runtime tests 通过；前端 build 通过；浏览器完成发布流程验证。
+  - 详细记录见 `doc/plan/agent-studio-mvp-2026-05-16.md`。
+- **2026-05-16 Agent Studio UX Slice 1**：完成三工作区骨架。
+  - 将原单页拆分为 `Agents / Workflows / Runs`
+  - `Agents` 承载 Agent 定义维护
+  - `Workflows` 承载画布、校验和发布
+  - `Runs` 承载运行调试
+  - 保留现有能力，前端 build 与浏览器验证通过
+  - 工作日志见 `doc/log/2026-05-16-agent-studio-slice1-workspaces.md`
+- **2026-05-16 Agent Studio UX Slice 2**：完成 Agent 编辑器分层。
+  - 默认进入引导模式
+  - 完整 JSON 配置保留在专家模式
+  - Schema / 映射 / 约束在引导模式下先展示摘要
+  - 前端 build 与浏览器验证通过
+  - 工作日志见 `doc/log/2026-05-16-agent-studio-slice2-editor-modes.md`
+- **2026-05-16 Agent Studio UX Slice 3**：完成 Workflow Builder 第一轮增强。
+  - 节点入口迁移到左侧 palette
+  - 链路校验改为常驻反馈
+  - 工作流页面形成“节点库 / 画布 / Inspector”三栏结构
+  - 前端 build 与浏览器验证通过
+  - 工作日志见 `doc/log/2026-05-16-agent-studio-slice3-workflow-builder.md`
+- **2026-05-16 Agent Studio UX Slice 4**：完成 Runs 第一轮增强，并修复首节点 root mapping 运行时缺陷。
+  - 新增 Run summary 与 timeline
+  - 修复默认链路首节点 `payload` 映射失败问题
+  - 新增 root mapping 测试
+  - 前端 build 通过，后端相关 runtime tests 5 passed
+  - 工作日志见 `doc/log/2026-05-16-agent-studio-slice4-runs.md`
+- **2026-05-16 Agent Studio UX Slice 5**：完成 Agent 编辑器组件化增强。
+  - 新增 `PromptEditor`：变量识别与模板预览
+  - 新增 `SchemaEditor` / `ContractEditor`：引导模式下可直接维护字段表
+  - Prompt 与 Schema 的常见配置已可脱离 JSON 完成
+  - 前端 build 与浏览器验证通过
+  - 工作日志见 `doc/log/2026-05-16-agent-studio-slice5-editor-components.md`
 
 - **2026-05-13 Sprint 3**：Task 2.5 Audit 扩展 + Task 3.1 认证系统 + Task 3.2 WebSocket 实时推送。
   - **Audit**：`AuditService.log()` 增加 SHA-256 哈希链（`prev_hash` → `curr_hash`）；新增 `GET /audit/verify`（链完整性验证）、`GET /audit/export`（CSV 下载）、`GET /audit/actor-stats?limit=N`、`GET /audit/logs?action=xx` 支持 action 过滤。

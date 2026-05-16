@@ -14,7 +14,12 @@ from app.domains.agents.models import (  # noqa: F401
     AgentMessage,
     AgentRegistry,
     AgentTask,
+    AgentDefinition,
     ToolRegistry,
+    WorkflowDefinition,
+    WorkflowEdge,
+    WorkflowNode,
+    WorkflowVersion,
 )
 from app.domains.audit.models import AuditLog, EventOutbox, IdempotencyKey  # noqa: F401
 from app.domains.backtest.models import (  # noqa: F401
@@ -24,7 +29,7 @@ from app.domains.backtest.models import (  # noqa: F401
     EquityPoint,
     StressResult,
 )
-from app.domains.data.models import MarketBarDaily  # noqa: F401
+from app.domains.data.models import MarketBarDaily, StockInfo  # noqa: F401
 from app.domains.execution.paper_models import (  # noqa: F401
     PaperAccount,
     PaperFill,
