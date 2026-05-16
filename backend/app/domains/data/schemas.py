@@ -120,6 +120,13 @@ class DataIncidentOut(BaseModel):
     statusTone: str
 
 
+class IngestTrend(BaseModel):
+    """Recent daily bar ingest volume (one point per trade_date in local DB)."""
+
+    dates: list[str]
+    bars: list[int]
+
+
 class DataOverview(BaseModel):
     totalSources: int
     activeSources: int
@@ -131,6 +138,10 @@ class DataOverview(BaseModel):
     healthScore: int
     healthStatus: str
     healthStatusTone: str
+    totalBars: int = 0
+    totalSymbols: int = 0
+    featureCount: int = 0
+    latestTradeDate: str | None = None
 
 
 class DataScreen(BaseModel):
@@ -139,6 +150,7 @@ class DataScreen(BaseModel):
     kpis: list[dict[str, str]]
     sources: list[DataSourceOut]
     latencyTrend: LatencyTrend
+    ingestTrend: IngestTrend
     lineage: LineageOut
     incidents: list[DataIncidentOut]
 

@@ -15,6 +15,11 @@ export default function DataHeader({ onModal }: Props) {
   const h = data.header
   const tiers = data.tiers
   const kpis = data.kpis
+  const libBits =
+    h.totalBars != null && h.totalSymbols != null
+      ? `${h.totalSymbols.toLocaleString()} 标的 · ${h.totalBars.toLocaleString()} bars`
+      : null
+  const featBits = h.featureCount != null && h.featureCount > 0 ? `${h.featureCount} 特征` : null
 
   // SVG gauge math (radius 52, stroke 9)
   const radius = 52
@@ -34,6 +39,11 @@ export default function DataHeader({ onModal }: Props) {
           <p className="dh-status-line">
             {h.totalSources} 总源 · {h.activeSources} 活跃
             {h.erroredSources > 0 && <em> · {h.erroredSources} 异常</em>}
+            {libBits != null && <em> · {libBits}</em>}
+            {featBits != null && <em> · {featBits}</em>}
+            {h.latestTradeDate != null && h.latestTradeDate !== '' && (
+              <em> · 最新 {h.latestTradeDate}</em>
+            )}
           </p>
           <span className={`dh-badge tone-${h.healthStatusTone}`}>
             {h.healthStatus} · {h.healthScore}

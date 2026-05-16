@@ -1237,6 +1237,10 @@ export const cryptoMock: MockData = {
       healthScore: 82,
       healthStatus: 'WATCH',
       healthStatusTone: 'yellow',
+      totalBars: 2_884_220,
+      totalSymbols: 2104,
+      featureCount: 36,
+      latestTradeDate: '2026-05-15',
     },
     tiers: [
       { tier: 'research', label: '研究层', count: 5, active: 5, avgLatencyMs: 320, license: 'Research Only', tone: 'blue', desc: 'CCXT Public / CoinGecko / Etherscan,免费公共 API,仅用于研究、回测' },
@@ -1273,6 +1277,10 @@ export const cryptoMock: MockData = {
       paper: [120, 130, 140, 150, 160, 145, 140, 165, 180, 145, 142, 140],
       live: [32, 34, 38, 42, 45, 38, 38, 42, 50, 38, 38, 36],
       slaMs: 200,
+    },
+    ingestTrend: {
+      dates: ['05-06', '05-07', '05-08', '05-09', '05-10', '05-11', '05-12', '05-13', '05-14', '05-15'],
+      bars: [12400, 12820, 11940, 13200, 13650, 13400, 13820, 14200, 14050, 14580],
     },
     lineage: {
       nodes: [

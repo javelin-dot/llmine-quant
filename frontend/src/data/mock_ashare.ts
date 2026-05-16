@@ -1217,6 +1217,10 @@ export const ashareMock: MockData = {
       healthScore: 88,
       healthStatus: 'HEALTHY',
       healthStatusTone: 'green',
+      totalBars: 4_336_654,
+      totalSymbols: 4583,
+      featureCount: 42,
+      latestTradeDate: '2026-05-15',
     },
     tiers: [
       { tier: 'research', label: '研究层', count: 5, active: 5, avgLatencyMs: 240, license: 'Research Only', tone: 'blue', desc: 'AKShare / Baostock / 雪球网络数据,仅用于学术研究、回测、策略发现' },
@@ -1253,6 +1257,10 @@ export const ashareMock: MockData = {
       paper: [60, 65, 70, 62, 68, 64, 60, 65, 70, 62, 62, 60],
       live: [8, 9, 10, 11, 12, 9, 10, 12, 14, 11, 11, 10],
       slaMs: 80,
+    },
+    ingestTrend: {
+      dates: ['05-06', '05-07', '05-08', '05-09', '05-10', '05-11', '05-12', '05-13', '05-14', '05-15'],
+      bars: [18200, 18450, 18120, 18600, 18920, 19100, 19340, 19210, 19500, 19820],
     },
     lineage: {
       nodes: [

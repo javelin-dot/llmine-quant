@@ -8666,6 +8666,62 @@ h2 {
 .data-root > *:nth-child(2) { animation-delay: 0.10s; }
 .data-root > *:nth-child(3) { animation-delay: 0.16s; }
 .data-root > *:nth-child(4) { animation-delay: 0.22s; }
+.data-root > *:nth-child(5) { animation-delay: 0.28s; }
+
+.data-tabs-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.data-tab-btn {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.52);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+.data-tab-btn:hover {
+  color: rgba(236, 241, 255, 0.95);
+  background: rgba(255, 255, 255, 0.05);
+}
+.data-tab-btn.active {
+  background: rgba(124, 198, 255, 0.16);
+  color: #ecf1ff;
+  box-shadow: 0 0 0 1px rgba(124, 198, 255, 0.35);
+}
+
+.data-tab-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 120px;
+}
+.data-tab-hint {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.48);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.data-ingest-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.data-sub-single {
+  grid-template-columns: 1fr !important;
+}
 
 .data-main {
   display: grid;
@@ -9374,6 +9430,11 @@ h2 {
 .dl-stat.tone-yellow strong { color: #f9c74f; }
 .dl-stat.tone-blue strong { color: #7cc6ff; }
 
+.dl-ingest-head {
+  margin-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 /* LineageGraph */
 .dlg-head {
   position: relative;
@@ -9420,6 +9481,7 @@ h2 {
 .dlg-leg.leg-model i { background: rgba(249, 199, 79, 0.18); color: rgba(249, 199, 79, 0.7); }
 .dlg-leg.leg-signal i { background: rgba(193, 157, 241, 0.18); color: rgba(193, 157, 241, 0.7); }
 .dlg-leg.leg-order i { background: rgba(255, 122, 133, 0.18); color: rgba(255, 122, 133, 0.7); }
+.dlg-leg.leg-other i { background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.55); }
 
 .dlg-canvas {
   position: relative;
@@ -9440,6 +9502,7 @@ h2 {
 .dlg-node.node-yellow { fill: rgba(249, 199, 79, 0.12); stroke: rgba(249, 199, 79, 0.55); }
 .dlg-node.node-purple { fill: rgba(193, 157, 241, 0.14); stroke: rgba(193, 157, 241, 0.6); }
 .dlg-node.node-red { fill: rgba(255, 122, 133, 0.14); stroke: rgba(255, 122, 133, 0.6); }
+.dlg-node.node-gray { fill: rgba(255, 255, 255, 0.06); stroke: rgba(255, 255, 255, 0.25); }
 
 /* BiasGate */
 .db-head {

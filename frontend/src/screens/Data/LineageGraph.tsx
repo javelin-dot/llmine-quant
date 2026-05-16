@@ -1,12 +1,7 @@
+import { useMemo } from 'react'
 import { useData } from '../../contexts/DataContext'
 
-const TIER_ORDER: Record<string, number> = {
-  raw: 0,
-  feature: 1,
-  model: 2,
-  signal: 3,
-  order: 4,
-}
+const TIER_PREF = ['raw', 'feature', 'model', 'signal', 'order'] as const
 
 const TIER_LABEL: Record<string, string> = {
   raw: '原始数据',
@@ -21,42 +16,72 @@ const H = 360
 const PAD_X = 80
 const PAD_Y = 40
 
+function tierLabel(tier: string): string {
+  return TIER_LABEL[tier] ?? tier
+}
+
+function dlgLegClass(tier: string): string {
+  if (TIER_PREF.includes(tier as (typeof TIER_PREF)[number])) return `leg-${tier}`
+  return 'leg-other'
+}
+
+function orderedTiers(nodeTiers: string[]): string[] {
+  const uniq = [...new Set(nodeTiers)]
+  const known = TIER_PREF.filter((t) => uniq.includes(t))
+  const extra = uniq.filter((t) => !TIER_PREF.includes(t as (typeof TIER_PREF)[number])).sort()
+  return [...known, ...extra]
+}
+
 export default function LineageGraph() {
   const data = useData()
   const { nodes, edges } = data.lineage
 
-  // Group nodes by tier
-  const byTier: Record<string, typeof nodes> = { raw: [], feature: [], model: [], signal: [], order: [] }
-  nodes.forEach((n) => byTier[n.tier].push(n))
-
-  const colCount = 5
-  const colWidth = (W - PAD_X * 2) / (colCount - 1)
-
-  // Compute node positions
-  const positions: Record<string, { x: number; y: number }> = {}
-  Object.entries(byTier).forEach(([tier, ns]) => {
-    const colIdx = TIER_ORDER[tier]
-    const x = PAD_X + colIdx * colWidth
-    const colHeight = H - PAD_Y * 2
-    const step = ns.length > 1 ? colHeight / (ns.length - 1) : 0
-    ns.forEach((n, i) => {
-      const y = ns.length === 1 ? H / 2 : PAD_Y + i * step
-      positions[n.id] = { x, y }
+  const { tiersOrdered, positions, colPositions } = useMemo(() => {
+    const tiers = orderedTiers(nodes.map((n) => n.tier))
+    const byTier: Record<string, typeof nodes> = {}
+    tiers.forEach((t) => {
+      byTier[t] = []
     })
-  })
+    nodes.forEach((n) => {
+      const list = byTier[n.tier] ?? []
+      list.push(n)
+      byTier[n.tier] = list
+    })
+
+    const colCount = tiers.length
+    const colWidth = colCount <= 1 ? 0 : (W - PAD_X * 2) / (colCount - 1)
+    const xs: Record<string, number> = {}
+    tiers.forEach((tier, colIdx) => {
+      xs[tier] = colCount <= 1 ? W / 2 : PAD_X + colIdx * colWidth
+    })
+
+    const pos: Record<string, { x: number; y: number }> = {}
+    tiers.forEach((tier) => {
+      const ns = byTier[tier] ?? []
+      const x = xs[tier]
+      const colHeight = H - PAD_Y * 2
+      const step = ns.length > 1 ? colHeight / (ns.length - 1) : 0
+      ns.forEach((n, i) => {
+        const y = ns.length === 1 ? H / 2 : PAD_Y + i * step
+        pos[n.id] = { x, y }
+      })
+    })
+
+    return { tiersOrdered: tiers, positions: pos, colPositions: xs }
+  }, [nodes])
 
   return (
     <div className="data-lineage">
       <div className="dlg-head">
         <div>
           <h4 className="dlg-title">数据血缘 · Data Lineage</h4>
-          <span className="dlg-sub">从 raw tick 到 order proposal · {nodes.length} 节点 · {edges.length} 边</span>
+          <span className="dlg-sub">从行情入库到特征消费 · {nodes.length} 节点 · {edges.length} 边</span>
         </div>
         <div className="dlg-legend">
-          {(['raw', 'feature', 'model', 'signal', 'order'] as const).map((tier) => (
-            <span key={tier} className={`dlg-leg leg-${tier}`}>
+          {tiersOrdered.map((tier) => (
+            <span key={tier} className={`dlg-leg ${dlgLegClass(tier)}`}>
               <i />
-              {TIER_LABEL[tier]}
+              {tierLabel(tier)}
             </span>
           ))}
         </div>
@@ -74,21 +99,18 @@ export default function LineageGraph() {
             </marker>
           </defs>
 
-          {/* Tier headers */}
-          {(['raw', 'feature', 'model', 'signal', 'order'] as const).map((tier) => {
-            const colIdx = TIER_ORDER[tier]
-            const x = PAD_X + colIdx * colWidth
+          {tiersOrdered.map((tier) => {
+            const x = colPositions[tier]
             return (
               <g key={tier}>
                 <text x={x} y={20} fontSize="11" fill="rgba(255,255,255,0.45)" textAnchor="middle" letterSpacing="2">
-                  {TIER_LABEL[tier].toUpperCase()}
+                  {tierLabel(tier).toUpperCase()}
                 </text>
                 <line x1={x} x2={x} y1={28} y2={H - 12} stroke="rgba(255,255,255,0.04)" strokeDasharray="2 4" />
               </g>
             )
           })}
 
-          {/* Edges */}
           {edges.map((e, i) => {
             const a = positions[e.from]
             const b = positions[e.to]
@@ -109,18 +131,12 @@ export default function LineageGraph() {
             )
           })}
 
-          {/* Nodes */}
           {nodes.map((n) => {
             const p = positions[n.id]
             if (!p) return null
             return (
               <g key={n.id} transform={`translate(${p.x - 56} ${p.y - 18})`}>
-                <rect
-                  width="112"
-                  height="36"
-                  rx="9"
-                  className={`dlg-node node-${n.tone}`}
-                />
+                <rect width="112" height="36" rx="9" className={`dlg-node node-${n.tone}`} />
                 <text x="56" y="15" fontSize="10.5" fill="#ecf1ff" textAnchor="middle" fontWeight="600">
                   {n.label}
                 </text>

@@ -1,13 +1,17 @@
 """Data Service API — data sources, market data, lineage, incidents."""
 
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.domains.audit.models import AuditLog
 from app.domains.data.models import (
+    DataSource,
     FeatureSet,
     FeatureUsage,
     LineageEdge,
@@ -15,8 +19,6 @@ from app.domains.data.models import (
     MarketBarDaily,
     StockInfo,
 )
-from datetime import date, timedelta
-
 from app.domains.data.schemas import (
     DataIncidentOut,
     DataOverview,
@@ -25,6 +27,7 @@ from app.domains.data.schemas import (
     DataSourceTier,
     FeatureOut,
     FeatureUsageOut,
+    IngestTrend,
     LatencyTrend,
     LineageNodeOut,
     LineageOut,
@@ -57,104 +60,415 @@ router = APIRouter()
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-_HEADER = DataOverview(
-    totalSources=12,
-    activeSources=10,
-    erroredSources=2,
-    avgLatencyMs=180,
-    p95LatencyMs=420,
-    missingRate=0.0008,
-    incidents24h=1,
-    healthScore=88,
-    healthStatus="HEALTHY",
-    healthStatusTone="green",
-)
 
-_TIERS = [
-    DataSourceTier(tier="research", label="研究层", count=6, active=5, avgLatencyMs=150, license="免费", tone="blue", desc="AKShare / Baostock 基础行情"),
-    DataSourceTier(tier="paper", label="模拟盘层", count=4, active=4, avgLatencyMs=200, license="付费", tone="yellow", desc="Tushare Pro 增强数据"),
-    DataSourceTier(tier="live", label="实盘层", count=2, active=1, avgLatencyMs=300, license="机构", tone="red", desc="Wind / 券商直连"),
-]
+def _tier_tone(tier: str) -> str:
+    if tier == "paper":
+        return "yellow"
+    if tier == "live":
+        return "red"
+    return "blue"
 
-_SOURCES = [
-    DataSourceOut(
-        id="ds-001", name="AKShare 日线", provider="akshare", tier="research", tierTone="blue",
-        type="kline", coverage="沪深A股", latencyMs=120, latencyP95=350, missingPct=0.001,
-        driftScore=0.02, license="免费", status="healthy", statusTone="green", lastUpdate="2 min ago"
-    ),
-    DataSourceOut(
-        id="ds-002", name="Tushare Pro 日线", provider="tushare", tier="paper", tierTone="yellow",
-        type="kline", coverage="沪深A股+科创板", latencyMs=180, latencyP95=420, missingPct=0.0005,
-        driftScore=0.01, license="付费", status="healthy", statusTone="green", lastUpdate="1 min ago"
-    ),
-    DataSourceOut(
-        id="ds-003", name="Wind 机构数据", provider="wind", tier="live", tierTone="red",
-        type="kline", coverage="全市场", latencyMs=280, latencyP95=520, missingPct=0.0002,
-        driftScore=0.01, license="机构", status="warning", statusTone="yellow", lastUpdate="5 min ago"
-    ),
-    DataSourceOut(
-        id="ds-004", name="AKShare 财务数据", provider="akshare", tier="research", tierTone="blue",
-        type="fundamental", coverage="沪深A股", latencyMs=200, latencyP95=600, missingPct=0.002,
-        driftScore=0.03, license="免费", status="healthy", statusTone="green", lastUpdate="10 min ago"
-    ),
-]
 
-_LATENCY_TREND = LatencyTrend(
-    times=["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"],
-    research=[120, 130, 125, 140, 135, 150, 145, 130],
-    paper=[180, 200, 190, 210, 205, 220, 215, 195],
-    live=[280, 300, 290, 310, 305, 320, 315, 295],
-    slaMs=500,
-)
+def _map_db_data_source(r: DataSource) -> DataSourceOut:
+    st = (r.status or "healthy").lower()
+    tone_map = {
+        "healthy": "green",
+        "warning": "yellow",
+        "error": "red",
+        "maintenance": "gray",
+    }
+    st_tone = tone_map.get(st, "blue")
+    return DataSourceOut(
+        id=r.id,
+        name=r.name,
+        provider=r.provider,
+        tier=r.tier,
+        tierTone=_tier_tone(r.tier),
+        type=r.type,
+        coverage=r.coverage or "—",
+        latencyMs=int(r.latency_ms or 0),
+        latencyP95=int(r.latency_p95 or 0),
+        missingPct=float(r.missing_pct or 0.0),
+        driftScore=float(r.drift_score or 0.0),
+        license=r.license or "—",
+        status=st,
+        statusTone=st_tone,
+        lastUpdate=r.last_update or "—",
+    )
 
-_LINEAGE = LineageOut(
-    nodes=[
-        LineageNodeOut(id="n1", label="AKShare Raw", tier="raw", tone="blue", version="v2.1.0", permission="read"),
-        LineageNodeOut(id="n2", label="Cleaned Bars", tier="raw", tone="blue", version="v1.3.0", permission="read"),
-        LineageNodeOut(id="n3", label="Feature Set", tier="feature", tone="green", version="v4.2.0", permission="read"),
-        LineageNodeOut(id="n4", label="MA Strategy", tier="model", tone="purple", version="v1.0.0", permission="execute"),
-        LineageNodeOut(id="n5", label="Signal", tier="signal", tone="yellow", version="v1.0.0", permission="read"),
-        LineageNodeOut(id="n6", label="Order Draft", tier="order", tone="red", version="v1.0.0", permission="write"),
-    ],
-    edges=[{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"}, {"from": "n3", "to": "n4"}, {"from": "n4", "to": "n5"}, {"from": "n5", "to": "n6"}],
-)
 
-_INCIDENTS = [
-    DataIncidentOut(
-        time="09:15", source="Wind 机构数据", type="latency", typeTone="yellow",
-        severity="medium", severityTone="yellow", title="Wind API 延迟升高",
-        detail="P95 延迟达到 520ms，超出 SLA 阈值 500ms", resolution="已通知 Wind 技术支持",
-        status="ongoing", statusTone="yellow"
-    ),
-]
+async def _symbol_stats_row(db: AsyncSession) -> tuple[int, int, str | None, str | None]:
+    stmt = select(
+        func.count(func.distinct(MarketBarDaily.symbol)).label("total_symbols"),
+        func.count(MarketBarDaily.id).label("total_bars"),
+        func.max(MarketBarDaily.trade_date).label("latest_trade_date"),
+        func.min(MarketBarDaily.trade_date).label("earliest_trade_date"),
+    )
+    row = (await db.execute(stmt)).one()
+    return (
+        int(row.total_symbols or 0),
+        int(row.total_bars or 0),
+        str(row.latest_trade_date) if row.latest_trade_date else None,
+        str(row.earliest_trade_date) if row.earliest_trade_date else None,
+    )
 
-_KPIS = [
-    {"label": "数据源", "value": "12", "trend": "+1", "tone": "blue"},
-    {"label": "P95 延迟", "value": "420ms", "trend": "+15%", "tone": "yellow"},
-    {"label": "缺失率", "value": "0.08%", "trend": "-0.02%", "tone": "green"},
-    {"label": "漂移分", "value": "0.02", "trend": "+0.01", "tone": "green"},
-    {"label": "事件", "value": "1", "trend": "+1", "tone": "yellow"},
-]
+
+async def _ingest_trend_series(db: AsyncSession) -> tuple[list[str], list[int]]:
+    bars_count = func.count(MarketBarDaily.id).label("c")
+    stmt = (
+        select(MarketBarDaily.trade_date, bars_count)
+        .group_by(MarketBarDaily.trade_date)
+        .order_by(MarketBarDaily.trade_date.desc())
+        .limit(12)
+    )
+    rows = (await db.execute(stmt)).all()
+    rows = list(reversed(rows))
+    dates = [str(r.trade_date) for r in rows]
+    counts = [int(r.c) for r in rows]
+    return dates, counts
+
+
+async def _feature_lineage(db: AsyncSession, total_bars: int, *, limit: int = 14) -> LineageOut:
+    feats = (await db.execute(select(FeatureSet).order_by(FeatureSet.name).limit(limit))).scalars().all()
+    nodes: list[LineageNodeOut] = [
+        LineageNodeOut(
+            id="n-bars-local",
+            label=f"Daily OHLCV · {total_bars:,} rows",
+            tier="raw",
+            tone="blue",
+            version="v1",
+            permission="read",
+        )
+    ]
+    edges: list[dict[str, str]] = []
+    for f in feats:
+        nid = f"f-{f.id}"
+        lbl = (f.name or "feature")[:28]
+        nodes.append(
+            LineageNodeOut(
+                id=nid,
+                label=lbl,
+                tier="feature",
+                tone="green",
+                version=f.version or "1",
+                permission=f.permission_scope or "research",
+            )
+        )
+        edges.append({"from": "n-bars-local", "to": nid})
+    if not feats:
+        nodes.append(
+            LineageNodeOut(
+                id="n-empty-features",
+                label="No registered features yet",
+                tier="feature",
+                tone="gray",
+                version="—",
+                permission="—",
+            )
+        )
+        edges.append({"from": "n-bars-local", "to": "n-empty-features"})
+    return LineageOut(nodes=nodes, edges=edges)
+
+
+async def _data_incidents(db: AsyncSession, sync_error: str | None) -> list[DataIncidentOut]:
+    out: list[DataIncidentOut] = []
+    now_s = datetime.now(UTC).strftime("%m-%d %H:%MZ")
+    if sync_error:
+        out.append(
+            DataIncidentOut(
+                time=now_s,
+                source="market_sync",
+                type="outage",
+                typeTone="red",
+                severity="high",
+                severityTone="red",
+                title="行情全量同步错误",
+                detail=sync_error[:400],
+                resolution="在「行情入库」分页查看并重试同步",
+                status="ongoing",
+                statusTone="yellow",
+            )
+        )
+    since = datetime.now(UTC) - timedelta(days=7)
+    logs = (
+        await db.execute(
+            select(AuditLog)
+            .where(AuditLog.created_at >= since)
+            .where(AuditLog.result != "success")
+            .order_by(AuditLog.created_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    for row in logs:
+        tm = row.created_at.strftime("%m-%d %H:%M") if row.created_at else "—"
+        out.append(
+            DataIncidentOut(
+                time=tm,
+                source=row.actor or "system",
+                type="schema",
+                typeTone="yellow",
+                severity="medium",
+                severityTone="yellow",
+                title=row.action,
+                detail=(row.detail or row.resource_type or "")[:320],
+                resolution="见审计合规 → 日志",
+                status="review",
+                statusTone="yellow",
+            )
+        )
+    return out
+
+
+def _latency_trend_from_ingest(dates: list[str], bars: list[int], sync: MarketSyncStatus) -> LatencyTrend:
+    """Three lines are derived from local ingest volume so the legacy chart stays populated."""
+    if not bars:
+        base = [120.0, 125.0, 118.0, 130.0, 122.0, 128.0, 124.0, 121.0]
+        return LatencyTrend(
+            times=["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00"],
+            research=base,
+            paper=[x * 1.08 for x in base],
+            live=[x * 1.15 for x in base],
+            slaMs=500,
+        )
+    mx = max(bars) or 1
+    pad = [80.0 + 320.0 * (float(b) / mx) for b in bars]
+    if len(pad) < 8:
+        head = pad[0]
+        pad = ([head] * (8 - len(pad))) + pad
+    elif len(pad) > 8:
+        pad = pad[-8:]
+    times_raw = dates[-len(pad) :] if dates else []
+    while len(times_raw) < len(pad):
+        times_raw.insert(0, times_raw[0] if times_raw else "--")
+    times = [(t[-5:] if isinstance(t, str) and len(t) >= 5 else str(t)) for t in times_raw[: len(pad)]]
+    bump = sync.rate_per_sec or 0.0
+    live_adj = [min(980.0, p + bump * 2.5) for p in pad]
+    return LatencyTrend(
+        times=times,
+        research=list(pad),
+        paper=[p * 1.06 for p in pad],
+        live=live_adj,
+        slaMs=500,
+    )
+
+
+def _synthetic_sources(stats: SymbolStatsOut, feat_count: int, sync: MarketSyncStatus) -> list[DataSourceOut]:
+    cov = (
+        f"{stats.totalSymbols} 标的 · {stats.totalBars:,} bars"
+        if stats.totalBars
+        else "库内暂无 K 线"
+    )
+    rate = sync.rate_per_sec or 0.0
+    lat = int(280 / max(rate, 0.2)) if sync.is_running else (95 if stats.totalBars else 0)
+    st = "healthy" if stats.totalBars and not sync.error else ("error" if sync.error else "warning")
+    st_tone = "green" if st == "healthy" else ("red" if sync.error else "yellow")
+    return [
+        DataSourceOut(
+            id="local-ohlcv",
+            name="本地行情库 (market_bars_daily)",
+            provider="llmine",
+            tier="research",
+            tierTone="blue",
+            type="kline",
+            coverage=cov,
+            latencyMs=min(lat, 900),
+            latencyP95=min(int(lat * 1.35) if lat else 0, 1200),
+            missingPct=0.0 if stats.totalBars else 1.0,
+            driftScore=0.0,
+            license="站内",
+            status=st,
+            statusTone=st_tone,
+            lastUpdate=stats.latestTradeDate or "—",
+        ),
+        DataSourceOut(
+            id="feature-store",
+            name="Feature Store",
+            provider="llmine",
+            tier="research",
+            tierTone="blue",
+            type="feature",
+            coverage=f"{feat_count} 个注册特征",
+            latencyMs=0,
+            latencyP95=0,
+            missingPct=0.0,
+            driftScore=0.0,
+            license="站内",
+            status="healthy" if feat_count else "maintenance",
+            statusTone="green" if feat_count else "gray",
+            lastUpdate="—",
+        ),
+    ]
+
+
+async def assemble_data_sources(db: AsyncSession, stats: SymbolStatsOut, feat_count: int, sync: MarketSyncStatus) -> list[DataSourceOut]:
+    cfg_rows: list[DataSource] = []
+    try:
+        cfg_rows = (
+            await db.execute(select(DataSource).order_by(DataSource.tier, DataSource.provider, DataSource.name))
+        ).scalars().all()
+    except DBAPIError:
+        # e.g. SQLite test DB without data_sources migration yet
+        cfg_rows = []
+    out = list(_synthetic_sources(stats, feat_count, sync))
+    out.extend(_map_db_data_source(r) for r in cfg_rows)
+    out.append(
+        DataSourceOut(
+            id="connector-tushare",
+            name="Tushare Pro（外部连接器）",
+            provider="tushare",
+            tier="paper",
+            tierTone="yellow",
+            type="kline",
+            coverage="需在环境配置 TOKEN",
+            latencyMs=0,
+            latencyP95=0,
+            missingPct=0.0,
+            driftScore=0.0,
+            license="付费",
+            status="maintenance",
+            statusTone="gray",
+            lastUpdate="未连接",
+        )
+    )
+    return out
+
+
+def _tiers_from_sources(sources: list[DataSourceOut]) -> list[DataSourceTier]:
+    meta = {
+        "research": ("研究层", "站内数据与开源链路", "免费"),
+        "paper": ("模拟盘层", "付费 API 占位 / 连接器", "付费"),
+        "live": ("实盘层", "机构行情占位", "机构"),
+    }
+    out: list[DataSourceTier] = []
+    for tier in ("research", "paper", "live"):
+        subs = [s for s in sources if s.tier == tier]
+        active = sum(1 for s in subs if s.status == "healthy")
+        avg_lat = int(sum(s.latencyMs for s in subs) / len(subs)) if subs else 0
+        label, desc, lic = meta[tier]
+        out.append(
+            DataSourceTier(
+                tier=tier,
+                label=label,
+                count=len(subs),
+                active=active,
+                avgLatencyMs=avg_lat,
+                license=lic,
+                tone=_tier_tone(tier),
+                desc=desc,
+            )
+        )
+    return out
+
+
+def _overview_header(
+    stats: SymbolStatsOut,
+    feat_count: int,
+    sources: list[DataSourceOut],
+    sync: MarketSyncStatus,
+    incident_count: int,
+) -> DataOverview:
+    bars_ok = stats.totalBars > 0
+    health = 88 if bars_ok else 42
+    if sync.error:
+        health -= 22
+    health = max(18, min(100, health))
+    tone = "green" if health >= 75 else ("yellow" if health >= 45 else "red")
+    status_lbl = "HEALTHY" if tone == "green" else ("DEGRADED" if tone == "yellow" else "CRITICAL")
+    rate = sync.rate_per_sec or 0.0
+    avg_lat = int(420 / max(rate, 0.15)) if sync.is_running else (160 if bars_ok else 0)
+    p95_lat = min(950, int(avg_lat * 1.35)) if avg_lat else 0
+    err_n = sum(1 for s in sources if s.status == "error")
+    miss = 0.0 if bars_ok else 1.0
+    active = sum(1 for s in sources if s.status == "healthy")
+    return DataOverview(
+        totalSources=len(sources),
+        activeSources=active,
+        erroredSources=err_n,
+        avgLatencyMs=avg_lat,
+        p95LatencyMs=p95_lat,
+        missingRate=miss,
+        incidents24h=incident_count,
+        healthScore=health,
+        healthStatus=status_lbl,
+        healthStatusTone=tone,
+        totalBars=stats.totalBars,
+        totalSymbols=stats.totalSymbols,
+        featureCount=feat_count,
+        latestTradeDate=stats.latestTradeDate,
+    )
+
+
+def _kpis_from_stats(stats: SymbolStatsOut, feat_count: int, sync: MarketSyncStatus, incidents: int) -> list[dict[str, str]]:
+    return [
+        {"label": "本地标的", "value": str(stats.totalSymbols), "trend": f"{stats.totalBars:,} bars", "tone": "blue"},
+        {"label": "特征条目", "value": str(feat_count), "trend": "Feature Store", "tone": ("green" if feat_count else "yellow")},
+        {
+            "label": "同步吞吐",
+            "value": f"{sync.rate_per_sec:.1f}/s" if sync.is_running else "—",
+            "trend": sync.phase if sync.is_running else "空闲",
+            "tone": ("green" if sync.is_running else "blue"),
+        },
+        {
+            "label": "同步进度",
+            "value": f"{sync.done}/{sync.total}" if sync.total else "—",
+            "trend": f"写入 {sync.inserted_rows:,} 行" if sync.inserted_rows else "—",
+            "tone": "yellow",
+        },
+        {"label": "七日事件", "value": str(incidents), "trend": "审计失败 + 同步", "tone": ("yellow" if incidents else "green")},
+        {
+            "label": "日期覆盖",
+            "value": stats.latestTradeDate or "—",
+            "trend": (f"起于 {stats.earliestTradeDate}" if stats.earliestTradeDate else "—"),
+            "tone": "blue",
+        },
+    ]
 
 
 @router.get("/overview", response_model=DataScreen)
 async def get_data_overview(db: DbSession) -> DataScreen:
-    """Return the complete Data Operations screen data."""
+    """Aggregate DB-backed KPIs plus sync state for the Data Operations UI."""
+    tsym, tbars, latest_td, earliest_td = await _symbol_stats_row(db)
+    stats = SymbolStatsOut(
+        totalSymbols=tsym,
+        totalBars=tbars,
+        latestTradeDate=latest_td,
+        earliestTradeDate=earliest_td,
+    )
+    feat_count = int((await db.execute(select(func.count()).select_from(FeatureSet))).scalar_one() or 0)
+    sync = _sync_status_out()
+    dates, bar_counts = await _ingest_trend_series(db)
+    ingest = IngestTrend(dates=dates, bars=bar_counts)
+    sources = await assemble_data_sources(db, stats, feat_count, sync)
+    incidents = await _data_incidents(db, sync.error)
+    latency = _latency_trend_from_ingest(dates, bar_counts, sync)
+    lineage = await _feature_lineage(db, stats.totalBars)
+    header = _overview_header(stats, feat_count, sources, sync, len(incidents))
+    kpis = _kpis_from_stats(stats, feat_count, sync, len(incidents))
+    tiers = _tiers_from_sources(sources)
     return DataScreen(
-        header=_HEADER,
-        tiers=_TIERS,
-        kpis=_KPIS,
-        sources=_SOURCES,
-        latencyTrend=_LATENCY_TREND,
-        lineage=_LINEAGE,
-        incidents=_INCIDENTS,
+        header=header,
+        tiers=tiers,
+        kpis=kpis,
+        sources=sources,
+        latencyTrend=latency,
+        ingestTrend=ingest,
+        lineage=lineage,
+        incidents=incidents,
     )
 
 
 @router.get("/sources", response_model=list[DataSourceOut])
 async def get_data_sources(db: DbSession) -> list[DataSourceOut]:
-    """Return all data sources."""
-    return _SOURCES
+    tsym, tbars, latest_td, earliest_td = await _symbol_stats_row(db)
+    stats = SymbolStatsOut(
+        totalSymbols=tsym,
+        totalBars=tbars,
+        latestTradeDate=latest_td,
+        earliestTradeDate=earliest_td,
+    )
+    feat_count = int((await db.execute(select(func.count()).select_from(FeatureSet))).scalar_one() or 0)
+    sync = _sync_status_out()
+    return await assemble_data_sources(db, stats, feat_count, sync)
 
 
 @router.post("/market-bars/import/csv", response_model=MarketDataImportSummary)
@@ -228,15 +542,15 @@ async def list_market_bars(
 
 
 @router.get("/latency-trend", response_model=LatencyTrend)
-async def get_latency_trend() -> LatencyTrend:
-    """Return latency trend data."""
-    return _LATENCY_TREND
+async def get_latency_trend(db: DbSession) -> LatencyTrend:
+    dates, bar_counts = await _ingest_trend_series(db)
+    return _latency_trend_from_ingest(dates, bar_counts, _sync_status_out())
 
 
 @router.get("/lineage", response_model=LineageOut)
-async def get_lineage() -> LineageOut:
-    """Return data lineage DAG."""
-    return _LINEAGE
+async def get_lineage(db: DbSession) -> LineageOut:
+    total_bars = int((await db.execute(select(func.count()).select_from(MarketBarDaily))).scalar_one() or 0)
+    return await _feature_lineage(db, total_bars)
 
 
 @router.get("/symbols/stats", response_model=SymbolStatsOut)
@@ -422,9 +736,9 @@ def _tone_for_tier(tier: str) -> str:
 
 
 @router.get("/incidents", response_model=list[DataIncidentOut])
-async def get_incidents() -> list[DataIncidentOut]:
-    """Return data incidents."""
-    return _INCIDENTS
+async def get_incidents(db: DbSession) -> list[DataIncidentOut]:
+    sync = _sync_status_out()
+    return await _data_incidents(db, sync.error)
 
 
 @router.post("/market-bars/sync/full", response_model=MarketSyncStatus, status_code=202)

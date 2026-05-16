@@ -421,6 +421,11 @@ export interface MockData {
       healthScore: number
       healthStatus: string
       healthStatusTone: 'green' | 'yellow' | 'red' | 'blue'
+      /** KPIs aligned with `/data/symbols/stats` + feature catalog (overview). */
+      totalBars?: number
+      totalSymbols?: number
+      featureCount?: number
+      latestTradeDate?: string | null
     }
     tiers: {
       tier: 'research' | 'paper' | 'live'
@@ -462,12 +467,17 @@ export interface MockData {
       live: number[]
       slaMs: number
     }
+    /** Daily bar row counts by trade_date (local DB ingest footprint). */
+    ingestTrend: {
+      dates: string[]
+      bars: number[]
+    }
     lineage: {
       nodes: {
         id: string
         label: string
-        tier: 'raw' | 'feature' | 'model' | 'signal' | 'order'
-        tone: 'blue' | 'yellow' | 'red' | 'green' | 'purple'
+        tier: string
+        tone: 'blue' | 'yellow' | 'red' | 'green' | 'purple' | 'gray'
         version: string
         permission: string
       }[]
