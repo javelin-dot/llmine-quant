@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth_deps import get_current_user
+from app.core.auth_deps import fetch_user_role_names, get_current_user, user_has_admin_role
 from app.core.config import settings
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
 from app.db.base_class import now_utc
@@ -183,11 +183,15 @@ async def logout(payload: RefreshRequest, db: DbSession) -> dict[str, str]:
 
 
 @router.get("/me")
-async def get_me(current_user: User = Depends(get_current_user)) -> dict:
+async def get_me(db: DbSession, current_user: User = Depends(get_current_user)) -> dict:
     """Return current user info from Bearer token (Authorization header)."""
+    roles = await fetch_user_role_names(db, current_user.id)
+    is_admin = await user_has_admin_role(db, current_user.id)
     return {
         "user_id": current_user.id,
         "email": current_user.email,
         "name": current_user.name,
         "status": current_user.status,
+        "roles": roles,
+        "is_admin": is_admin,
     }

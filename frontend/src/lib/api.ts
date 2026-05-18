@@ -82,6 +82,76 @@ async function deleteJson(path: string): Promise<void> {
   }
 }
 
+function _detailFromBody(text: string, status: number): string {
+  const fallback = text || `HTTP ${status}`
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown }
+    if (typeof parsed.detail === 'string') return parsed.detail
+    return fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function getJsonStrict<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    headers: { Accept: 'application/json', ..._authHeader() },
+  })
+  if (res.status === 401) {
+    _onUnauthorized()
+    throw new Error('Unauthorized')
+  }
+  const text = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(_detailFromBody(text, res.status))
+  return (text ? (JSON.parse(text) as T) : ({} as T))
+}
+
+async function patchJson<T>(path: string, body: object): Promise<T> {
+  const res = await fetch(`${API_PREFIX}${path}`, {
+    method: 'PATCH',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json', ..._authHeader() },
+    body: JSON.stringify(body),
+  })
+  if (res.status === 401) {
+    _onUnauthorized()
+    throw new Error('Unauthorized')
+  }
+  const text = await res.text().catch(() => '')
+  if (!res.ok) throw new Error(_detailFromBody(text, res.status))
+  return (text ? (JSON.parse(text) as T) : ({} as T))
+}
+
+export interface AuthMe {
+  user_id: string
+  email: string
+  name: string
+  status: string
+  roles: string[]
+  is_admin?: boolean
+}
+
+export interface AdminUserRow {
+  user_id: string
+  email: string
+  name: string
+  status: string
+  roles: string[]
+}
+
+export interface AdminRoleRow {
+  id: string
+  name: string
+  description: string | null
+}
+
+export interface InviteUserResponse {
+  user_id: string
+  email: string
+  name: string
+  initial_password: string
+  role_name: string
+}
+
 export interface TokenResponse {
   access_token: string
   token_type: string
@@ -405,9 +475,16 @@ export interface PaperAccountCreatePayload {
   }
 }
 
+export interface PaperAccountBindStrategyPayload {
+  strategyId: string
+  strategyVersionId: string
+}
+
 export interface PaperPosition {
   symbol: string
   quantity: number
+  availableQuantity: number
+  todayBuyQuantity: number
   avgCost: number
   lastPrice: number | null
   marketValue: number
@@ -427,6 +504,36 @@ export interface PaperOrder {
   status: string
   reason: string | null
   rejectionReason: string | null
+}
+
+export interface ManualPaperOrderPayload {
+  symbol: string
+  side: 'buy' | 'sell'
+  quantity: number
+  tradeDate?: string
+  reason?: string
+  executionMode?: 'immediate' | 'queue'
+}
+
+export interface PaperTargetPosition {
+  symbol: string
+  targetWeight: number
+  currentWeight: number
+  driftWeight: number
+  targetQuantity: number
+  currentQuantity: number
+  recommendedAction: 'open' | 'increase' | 'decrease' | 'close' | 'hold'
+  reason: string | null
+}
+
+export interface PaperEvaluationSnapshot {
+  tradeDate: string | null
+  sessionStatus: string
+  strategyBound: boolean
+  targetGross: number
+  currentGross: number
+  driftGross: number
+  targets: PaperTargetPosition[]
 }
 
 export interface PaperFill {
@@ -687,10 +794,46 @@ export const api = {
       postJson<{ status: string }>('/auth/logout', { access_token: token }),
     refresh: (token: string) =>
       postJson<TokenResponse>('/auth/refresh', { access_token: token }),
-    me: () =>
-      fetch(`${API_PREFIX}/auth/me`, {
-        headers: { Accept: 'application/json', ..._authHeader() },
-      }).then(r => r.ok ? r.json() : null),
+    me: async (): Promise<AuthMe | null> => {
+      try {
+        const res = await fetch(`${API_PREFIX}/auth/me`, {
+          headers: { Accept: 'application/json', ..._authHeader() },
+        })
+        if (res.status === 401) {
+          _onUnauthorized()
+          return null
+        }
+        if (!res.ok) return null
+        const j = (await res.json()) as {
+          user_id?: string
+          email?: string
+          name?: string
+          status?: string
+          roles?: unknown
+          is_admin?: unknown
+        }
+        const rolesRaw = j.roles
+        const roles = Array.isArray(rolesRaw)
+          ? rolesRaw.filter((x): x is string => typeof x === 'string')
+          : []
+        return {
+          user_id: String(j.user_id ?? ''),
+          email: String(j.email ?? ''),
+          name: String(j.name ?? ''),
+          status: String(j.status ?? ''),
+          roles,
+          is_admin: j.is_admin === true,
+        }
+      } catch {
+        return null
+      }
+    },
+    listUsers: () => getJsonStrict<AdminUserRow[]>('/auth/users'),
+    listRoles: () => getJsonStrict<AdminRoleRow[]>('/auth/roles'),
+    inviteUser: (payload: { name: string; email: string; role_name: string; password?: string }) =>
+      postJson<InviteUserResponse>('/auth/users', payload),
+    updateUser: (userId: string, payload: { name?: string; status?: string }) =>
+      patchJson<AdminUserRow>(`/auth/users/${encodeURIComponent(userId)}`, payload),
   },
   dashboard: {
     overview: () =>
@@ -778,6 +921,8 @@ export const api = {
       deleteJson(`/strategies/${encodeURIComponent(strategyId)}`),
     backtestReady: () =>
       getJson<{ total: number; items: StrategyListItem[] }>('/strategies/backtest-ready', () => ({ total: 0, items: [] })),
+    list: () =>
+      getJson<{ total: number; items: StrategyListItem[] }>('/strategies?page_size=100', () => ({ total: 0, items: [] })),
   },
   backtest: {
     overview: () => getJson<MockData['backtest']>('/backtests/overview', () => mock.backtest),
@@ -841,7 +986,11 @@ export const api = {
       getJson<{ name: string; count: number }[]>('/backtests/universe/sectors', () => []),
   },
   explain: {
-    overview: () => getJson<MockData['explain']>('/explain/overview', () => mock.explain),
+    overview: () => getJsonStrict<MockData['explain']>('/explain/overview'),
+    approveSignal: (traceId: string) =>
+      postJson<{ traceId: string; status: string }>('/explain/signal/approve', {
+        traceId,
+      }),
   },
   portfolio: {
     overview: () => getJson<MockData['portfolio']>('/portfolio/overview', () => mock.portfolio),
@@ -948,6 +1097,11 @@ export const api = {
   paper: {
     createAccount: (payload: PaperAccountCreatePayload) =>
       postJson<PaperAccount>('/paper/accounts', payload),
+    bindStrategy: (accountId: string, payload: PaperAccountBindStrategyPayload) =>
+      putJson<PaperAccount>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/strategy`,
+        payload,
+      ),
     listAccounts: () => getJson<PaperAccount[]>('/paper/accounts', () => []),
     getAccount: (accountId: string) =>
       getJson<PaperAccount>(
@@ -965,6 +1119,39 @@ export const api = {
       getJson<PaperOrder[]>(
         `/paper/accounts/${encodeURIComponent(accountId)}/orders`,
         () => [],
+      ),
+    submitOrder: (accountId: string, payload: ManualPaperOrderPayload) =>
+      postJson<PaperOrder>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/orders`,
+        payload,
+      ),
+    replaceOrder: (accountId: string, orderId: string, quantity: number) =>
+      patchJson<PaperOrder>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/orders/${encodeURIComponent(orderId)}`,
+        { quantity },
+      ),
+    cancelOrder: (accountId: string, orderId: string) =>
+      postJson<PaperOrder>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/orders/${encodeURIComponent(orderId)}/cancel`,
+        {},
+      ),
+    matchOrders: (accountId: string, tradeDate?: string) =>
+      postJson<{ ordersFilled: number; ordersRejected: number }>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/orders/match`,
+        tradeDate ? { tradeDate } : {},
+      ),
+    evaluation: (accountId: string) =>
+      getJson<PaperEvaluationSnapshot>(
+        `/paper/accounts/${encodeURIComponent(accountId)}/evaluation`,
+        () => ({
+          tradeDate: null,
+          sessionStatus: 'closed',
+          strategyBound: false,
+          targetGross: 0,
+          currentGross: 0,
+          driftGross: 0,
+          targets: [],
+        }),
       ),
     fills: (accountId: string) =>
       getJson<PaperFill[]>(

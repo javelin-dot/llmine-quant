@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { api, authStore } from '../../lib/api'
 
 interface LoginProps {
-  onSuccess: (userInfo: { userId: string; name: string; email: string }) => void
+  onSuccess: (userInfo: { userId: string; name: string; email: string }) => void | Promise<void>
 }
 
 type Mode = 'login' | 'register'
@@ -39,7 +39,7 @@ export default function Login({ onSuccess }: LoginProps) {
         try {
           const res = await api.auth.register(name.trim(), email, password)
           authStore.setToken(res.access_token)
-          onSuccess({ userId: res.user_id, name: res.name, email: res.email })
+          await onSuccess({ userId: res.user_id, name: res.name, email: res.email })
         } catch (err) {
           const msg = err instanceof Error ? err.message : '注册失败'
           // surface conflict clearly
@@ -53,7 +53,7 @@ export default function Login({ onSuccess }: LoginProps) {
         try {
           const res = await api.auth.login(email, password)
           authStore.setToken(res.access_token)
-          onSuccess({ userId: res.user_id, name: res.name, email: res.email })
+          await onSuccess({ userId: res.user_id, name: res.name, email: res.email })
         } catch (err) {
           setError(err instanceof Error ? err.message : '登录失败')
         } finally {

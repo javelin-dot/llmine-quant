@@ -32,12 +32,18 @@ export default function PortfolioChart() {
   const metrics = data.portfolioMetrics
 
   useEffect(() => {
-    if (!containerRef.current) return
-    const chart = echarts.init(containerRef.current, undefined, { renderer: 'canvas' })
+    const el = containerRef.current
+    if (!el) return
+    const chart = echarts.init(el, undefined, { renderer: 'canvas' })
     chartRef.current = chart
+
+    const ro = new ResizeObserver(() => chart.resize())
+    ro.observe(el)
+
     const onResize = () => chart.resize()
     window.addEventListener('resize', onResize)
     return () => {
+      ro.disconnect()
       window.removeEventListener('resize', onResize)
       chart.dispose()
       chartRef.current = null

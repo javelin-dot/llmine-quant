@@ -5,6 +5,8 @@ type Draft = Omit<AgentDefinition, 'id'>
 type JsonField = 'modelConfig' | 'inputSchema' | 'outputSchema' | 'normalizedInputSchema' | 'normalizedOutputSchema' | 'inputMapping' | 'outputMapping' | 'toolPolicy' | 'constraints' | 'runtimePolicy'
 type Workspace = 'agents' | 'workflows' | 'runs'
 type EditorMode = 'guided' | 'expert'
+type AgentFilter = 'all' | 'active' | 'draft'
+type SaveState = 'saved' | 'modified' | 'saving'
 
 const EMPTY_DRAFT: Draft = {
   name: '', role: '', avatar: 'A', description: '', objective: '', downstreamHint: '', autonomy: 'supervised', status: 'active',
@@ -29,18 +31,26 @@ export default function Agent(_props: { onNavigate?: (target: string) => void; o
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT)
   const [jsonDrafts, setJsonDrafts] = useState<Record<JsonField, string>>(() => jsonTexts(EMPTY_DRAFT))
   const [step, setStep] = useState(0)
-  const [editing, setEditing] = useState(false)
+  const [editing, setEditing] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null)
   const [connectFromId, setConnectFromId] = useState<string | null>(null)
-  const [runPayload, setRunPayload] = useState('{\n  \"payload\": {\"symbol\": \"600519.SH\"}\n}')
+  const [runPayload, setRunPayload] = useState('{\n  "payload": {}\n}')
   const [runResult, setRunResult] = useState<Record<string, unknown> | null>(null)
   const [running, setRunning] = useState(false)
   const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([])
   const [publishing, setPublishing] = useState(false)
   const [workspace, setWorkspace] = useState<Workspace>('agents')
   const [editorMode, setEditorMode] = useState<EditorMode>('guided')
+  const [agentQuery, setAgentQuery] = useState('')
+  const [agentFilter, setAgentFilter] = useState<AgentFilter>('all')
+  const [saveState, setSaveState] = useState<SaveState>('saved')
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
+  const [showNewAgent, setShowNewAgent] = useState(false)
+  const [newAgentRole, setNewAgentRole] = useState('backtest')
+  const [newAgentTemplateId, setNewAgentTemplateId] = useState('')
+  const [newAgentName, setNewAgentName] = useState('')
   const canvasRef = useRef<HTMLDivElement>(null)
 
   function jsonTexts(a: Draft): Record<JsonField, string> {
@@ -64,19 +74,26 @@ export default function Agent(_props: { onNavigate?: (target: string) => void; o
   }, [selectedWorkflowId])
   function selectAgent(agent: AgentDefinition) {
     const { id: _id, ...rest } = agent
-    setSelectedAgentId(agent.id); setDraft(rest); setJsonDrafts(jsonTexts(rest)); setEditing(false); setStep(0)
+    setSelectedAgentId(agent.id); setDraft(rest); setJsonDrafts(jsonTexts(rest)); setEditing(true); setStep(0); setSaveState('saved')
   }
-  function newAgent() { setSelectedAgentId(null); setDraft(EMPTY_DRAFT); setJsonDrafts(jsonTexts(EMPTY_DRAFT)); setEditing(true); setStep(0) }
-  function update<K extends keyof Draft>(key: K, value: Draft[K]) { setDraft((d) => ({ ...d, [key]: value })) }
-  function updateJson(field: JsonField, value: string) { setJsonDrafts((d) => ({ ...d, [field]: value })) }
+  function newAgent() { setShowNewAgent(true); setNewAgentTemplateId(''); setNewAgentName(''); setNewAgentRole('backtest') }
+  function createAgentDraft() {
+    const template = agents.find((agent) => agent.id === newAgentTemplateId)
+    const base = template ? (({ id: _id, ...rest }) => rest)(template) : EMPTY_DRAFT
+    const next = { ...base, name: newAgentName || `${capitalize(newAgentRole)} Agent`, role: newAgentRole, status: 'draft' }
+    setSelectedAgentId(null); setDraft(next); setJsonDrafts(jsonTexts(next)); setEditing(true); setStep(0); setSaveState('modified'); setShowNewAgent(false)
+  }
+  function update<K extends keyof Draft>(key: K, value: Draft[K]) { setDraft((d) => ({ ...d, [key]: value })); setSaveState('modified') }
+  function updateJson(field: JsonField, value: string) { setJsonDrafts((d) => ({ ...d, [field]: value })); setSaveState('modified') }
   async function saveAgent() {
     try {
+      setSaveState('saving')
       const next = { ...draft }
       ;(Object.keys(jsonDrafts) as JsonField[]).forEach((field) => { ;(next as any)[field] = parseJson(jsonDrafts[field], field) })
       if (!next.name || !next.role) throw new Error('名称和角色不能为空')
       const saved = selectedAgentId ? await api.agent.updateDefinition(selectedAgentId, agentPayload(next)) : await api.agent.createDefinition(agentPayload(next))
-      setMessage('Agent 已保存'); await refresh(); selectAgent(saved)
-    } catch (e) { setMessage(e instanceof Error ? e.message : '保存失败') }
+      setMessage('Agent 已保存'); setLastSavedAt(new Date().toISOString()); await refresh(); selectAgent(saved)
+    } catch (e) { setSaveState('modified'); setMessage(e instanceof Error ? e.message : '保存失败') }
   }
   const workflow = workflows.find((w) => w.id === selectedWorkflowId) ?? null
   const selectedNode = workflow?.nodes.find((n) => n.id === selectedNodeId) ?? null
@@ -126,6 +143,14 @@ export default function Agent(_props: { onNavigate?: (target: string) => void; o
     await saveWorkflow({ ...workflow, edges: workflow.edges.map((e) => e.id === edgeId ? { ...e, mapping } : e) })
   }
   const validationIssues = useMemo(() => validateWorkflow(workflow, agentById), [workflow, agentById])
+  const filteredAgents = useMemo(() => agents.filter((agent) => {
+    const matchesQuery = `${agent.name} ${agent.role}`.toLowerCase().includes(agentQuery.trim().toLowerCase())
+    const normalizedStatus = normalizeAgentStatus(agent.status)
+    const matchesFilter = agentFilter === 'all' || normalizedStatus === agentFilter
+    return matchesQuery && matchesFilter
+  }), [agents, agentFilter, agentQuery])
+  const agentValidation = useMemo(() => validateAgentDraft(draft), [draft])
+  const configuredRequiredFields = useMemo(() => countConfiguredAgentFields(draft), [draft])
   async function publishCurrentWorkflow() {
     if (!workflow || validationIssues.length) return
     try {
@@ -140,26 +165,45 @@ export default function Agent(_props: { onNavigate?: (target: string) => void; o
   }
 
   return <div className="agent-studio">
-    <header className="agent-studio-head"><div><h2>Agent Studio</h2><p>把 Agent 定义、工作流编排和运行调试分开管理。</p></div>{workspace==='agents' && <button className="btn" onClick={newAgent}>新增 Agent</button>}</header>
+    <header className="agent-console-titlebar">
+      <div><h2>Agent Console</h2><p>管理 Agent 的模型、提示词、输入输出契约、权限边界与运行策略。</p></div>
+      <div className="agent-console-title-actions">
+        {workspace === 'agents' && <>
+          <button className="btn secondary">导入模板</button>
+          <button className="btn secondary" onClick={()=>setWorkspace('runs')}>运行测试</button>
+          <button className="btn" disabled={saveState !== 'modified'} onClick={saveAgent}>{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : 'Save Changes'}</button>
+          <button className="btn" onClick={newAgent}>New Agent</button>
+        </>}
+      </div>
+    </header>
     {message && <div className="agent-studio-message">{message}</div>}
     <nav className="agent-workspace-nav">
-      <button className={workspace==='agents'?'active':''} onClick={()=>setWorkspace('agents')}><strong>Agents</strong><span>定义与配置</span></button>
-      <button className={workspace==='workflows'?'active':''} onClick={()=>setWorkspace('workflows')}><strong>Workflows</strong><span>编排与发布</span></button>
-      <button className={workspace==='runs'?'active':''} onClick={()=>setWorkspace('runs')}><strong>Runs</strong><span>调试与结果</span></button>
+      <button className={workspace==='agents'?'active':''} onClick={()=>setWorkspace('agents')}><strong>Agents</strong><em>{agents.length}</em></button>
+      <button className={workspace==='workflows'?'active':''} onClick={()=>setWorkspace('workflows')}><strong>Workflows</strong><em>{workflows.length}</em></button>
+      <button className={workspace==='runs'?'active':''} onClick={()=>setWorkspace('runs')}><strong>Runs</strong><em>{runResult ? 1 : 0}</em></button>
     </nav>
     {workspace==='agents' && <section className="agent-workspace">
-      <WorkspaceIntro eyebrow="Agents" title="可复用 Agent 定义" description="维护模型、提示词、输入输出契约、权限与运行策略。这里编辑的是模板，不是某条链路里的单个节点。" />
-      <div className="agent-studio-grid">
-      <aside className="agent-library"><h3>Agent 定义</h3>{agents.map((a) => <button key={a.id} className={a.id===selectedAgentId?'active':''} onClick={()=>selectAgent(a)}><span>{a.avatar}</span><strong>{a.name}</strong><small>{a.role}</small></button>)}</aside>
+      <div className="agent-console-grid">
+      <AgentSidebar agents={filteredAgents} selectedAgentId={selectedAgentId} query={agentQuery} filter={agentFilter} onQueryChange={setAgentQuery} onFilterChange={setAgentFilter} onSelect={selectAgent} onNewAgent={newAgent} />
       <section className="agent-editor">
-        <div className="agent-editor-mode"><div><strong>{editorMode==='guided'?'引导模式':'专家模式'}</strong><span>{editorMode==='guided'?'先完成常用配置，复杂字段按需展开。':'完整字段全部可编辑，适合精细配置。'}</span></div><div><button className={editorMode==='guided'?'active':''} onClick={()=>setEditorMode('guided')}>引导模式</button><button className={editorMode==='expert'?'active':''} onClick={()=>setEditorMode('expert')}>专家模式</button></div></div>
-        <div className="agent-editor-bar"><div>{STEPS.map((s,i)=><button key={s} className={i===step?'active':''} onClick={()=>setStep(i)}>{i+1}. {s}</button>)}</div><div><button className="btn secondary" onClick={()=>setEditing((v)=>!v)}>{editing?'取消编辑':'编辑'}</button><button className="btn" onClick={saveAgent}>保存 Agent</button></div></div>
+        <AgentHeader draft={draft} editing={editing} saveState={saveState} lastSavedAt={lastSavedAt} onToggleEditing={()=>setEditing((v)=>!v)} onRun={()=>setWorkspace('runs')} onSave={saveAgent} />
+        <div className="agent-editor-mode">
+          <div>
+            <strong>{editorMode==='guided'?'Guided':'Expert'}</strong>
+            <span>{editorMode==='guided'?'仅展示必要字段，适合快速完成基础配置。':'展示高级模型、权限、运行策略和契约配置。'}</span>
+          </div>
+          <div><button className={editorMode==='guided'?'active':''} onClick={()=>setEditorMode('guided')}>Guided</button><button className={editorMode==='expert'?'active':''} onClick={()=>setEditorMode('expert')}>Expert</button></div>
+        </div>
+        <AgentConfigTabs step={step} onChange={setStep} />
+        <div className="agent-config-body">
         {step===0 && <div className="agent-form-grid"><Field label="名称"><input disabled={!editing} value={draft.name} onChange={e=>update('name',e.target.value)} /></Field><Field label="角色"><input disabled={!editing} value={draft.role} onChange={e=>update('role',e.target.value)} /></Field><Field label="头像"><input disabled={!editing} value={draft.avatar} onChange={e=>update('avatar',e.target.value)} /></Field><Field label="自治级别"><select disabled={!editing} value={draft.autonomy} onChange={e=>update('autonomy',e.target.value)}><option>autonomous</option><option>supervised</option><option>human_gate</option></select></Field><Field label="描述"><textarea disabled={!editing} value={draft.description} onChange={e=>update('description',e.target.value)} /></Field><Field label="工作目标"><textarea disabled={!editing} value={draft.objective} onChange={e=>update('objective',e.target.value)} /></Field><Field label="下游交接"><textarea disabled={!editing} value={draft.downstreamHint} onChange={e=>update('downstreamHint',e.target.value)} /></Field></div>}
         {step===1 && <div className="agent-form-grid"><Field label="模型"><select disabled={!editing} value={String(draft.modelConfig.model ?? '')} onChange={e=>{const next={...draft.modelConfig,model:e.target.value}; update('modelConfig',next); updateJson('modelConfig',pretty(next))}}>{MODEL_OPTIONS.map(m=><option key={m}>{m}</option>)}</select></Field>{editorMode==='expert' && <JsonFieldArea disabled={!editing} label="模型配置 JSON" value={jsonDrafts.modelConfig} onChange={v=>updateJson('modelConfig',v)} />}<PromptEditor label="系统提示词" value={draft.systemPrompt} disabled={!editing} onChange={v=>update('systemPrompt',v)} /><PromptEditor label="用户提示词模板" value={draft.userPromptTemplate} disabled={!editing} onChange={v=>update('userPromptTemplate',v)} /></div>}
         {step===2 && (editorMode==='guided' ? <ContractEditor title="原始输入输出" inputLabel="原始输入" outputLabel="原始输出" input={draft.inputSchema} output={draft.outputSchema} disabled={!editing} onInputChange={schema=>{update('inputSchema',schema); updateJson('inputSchema',pretty(schema))}} onOutputChange={schema=>{update('outputSchema',schema); updateJson('outputSchema',pretty(schema))}} onExpert={()=>setEditorMode('expert')} /> : <div className="agent-json-grid"><JsonFieldArea disabled={!editing} label="原始输入 Schema" value={jsonDrafts.inputSchema} onChange={v=>updateJson('inputSchema',v)} /><JsonFieldArea disabled={!editing} label="原始输出 Schema" value={jsonDrafts.outputSchema} onChange={v=>updateJson('outputSchema',v)} /></div>)}
         {step===3 && (editorMode==='guided' ? <ContractEditor title="标准化结构" inputLabel="标准化输入" outputLabel="标准化输出" input={draft.normalizedInputSchema} output={draft.normalizedOutputSchema} disabled={!editing} onInputChange={schema=>{update('normalizedInputSchema',schema); updateJson('normalizedInputSchema',pretty(schema))}} onOutputChange={schema=>{update('normalizedOutputSchema',schema); updateJson('normalizedOutputSchema',pretty(schema))}} onExpert={()=>setEditorMode('expert')} /> : <div className="agent-json-grid"><JsonFieldArea disabled={!editing} label="标准化输入 Schema" value={jsonDrafts.normalizedInputSchema} onChange={v=>updateJson('normalizedInputSchema',v)} /><JsonFieldArea disabled={!editing} label="标准化输出 Schema" value={jsonDrafts.normalizedOutputSchema} onChange={v=>updateJson('normalizedOutputSchema',v)} /></div>)}
         {step===4 && (editorMode==='guided' ? <PolicySummary draft={draft} onExpert={()=>setEditorMode('expert')} /> : <div className="agent-json-grid"><JsonFieldArea disabled={!editing} label="输入映射" value={jsonDrafts.inputMapping} onChange={v=>updateJson('inputMapping',v)} /><JsonFieldArea disabled={!editing} label="输出映射" value={jsonDrafts.outputMapping} onChange={v=>updateJson('outputMapping',v)} /><JsonFieldArea disabled={!editing} label="工具权限" value={jsonDrafts.toolPolicy} onChange={v=>updateJson('toolPolicy',v)} /><JsonFieldArea disabled={!editing} label="约束" value={jsonDrafts.constraints} onChange={v=>updateJson('constraints',v)} /><JsonFieldArea disabled={!editing} label="运行策略" value={jsonDrafts.runtimePolicy} onChange={v=>updateJson('runtimePolicy',v)} /></div>)}
+        </div>
       </section>
+      <AgentInspector draft={draft} configuredRequiredFields={configuredRequiredFields} issues={agentValidation} saveState={saveState} runPayload={runPayload} runResult={runResult} onDryRun={()=>setWorkspace('runs')} />
       </div>
     </section>}
     {workspace==='workflows' && <section className="agent-workspace">
@@ -183,9 +227,83 @@ export default function Agent(_props: { onNavigate?: (target: string) => void; o
       </div>
       {workflow && <WorkflowRunPanel payload={runPayload} onPayloadChange={setRunPayload} running={running} onRun={()=>void runCurrentWorkflow()} result={runResult} />}
     </section>}
+    {showNewAgent && <NewAgentModal agents={agents} role={newAgentRole} templateId={newAgentTemplateId} name={newAgentName} onRoleChange={setNewAgentRole} onTemplateChange={setNewAgentTemplateId} onNameChange={setNewAgentName} onClose={()=>setShowNewAgent(false)} onCreate={createAgentDraft} />}
   </div>
 }
 function WorkspaceIntro({eyebrow,title,description}:{eyebrow:string;title:string;description:string}){return <header className="agent-workspace-intro"><span>{eyebrow}</span><h3>{title}</h3><p>{description}</p></header>}
+function AgentSidebar({agents,selectedAgentId,query,filter,onQueryChange,onFilterChange,onSelect,onNewAgent}:{agents:AgentDefinition[];selectedAgentId:string|null;query:string;filter:AgentFilter;onQueryChange:(value:string)=>void;onFilterChange:(value:AgentFilter)=>void;onSelect:(agent:AgentDefinition)=>void;onNewAgent:()=>void}) {
+  return <aside className="agent-library">
+    <div className="agent-library-head"><h3>Agents</h3><button onClick={onNewAgent}>＋</button></div>
+    <input className="agent-search" placeholder="Search agents" value={query} onChange={e=>onQueryChange(e.target.value)} />
+    <div className="agent-filter-row">{(['all','active','draft'] as AgentFilter[]).map((item)=><button key={item} className={filter===item?'active':''} onClick={()=>onFilterChange(item)}>{capitalize(item)}</button>)}</div>
+    <div className="agent-list">
+      {agents.map((agent)=><button key={agent.id} className={agent.id===selectedAgentId?'active':''} onClick={()=>onSelect(agent)}>
+        <span>{agent.avatar}</span>
+        <strong>{agent.name}</strong>
+        <small>{agent.role}</small>
+        <StatusBadge status={normalizeAgentStatus(agent.status)} />
+        <em>{agent.status === 'active' ? 'Ready' : agent.status}</em>
+      </button>)}
+      {agents.length===0 && <p className="agent-empty">没有匹配的 Agent。</p>}
+    </div>
+  </aside>
+}
+function AgentHeader({draft,editing,saveState,lastSavedAt,onToggleEditing,onRun,onSave}:{draft:Draft;editing:boolean;saveState:SaveState;lastSavedAt:string|null;onToggleEditing:()=>void;onRun:()=>void;onSave:()=>void}) {
+  return <header className="agent-config-header">
+    <div>
+      <h3>{draft.name || 'Untitled Agent'}</h3>
+      <div><code>{draft.role || 'unassigned'}</code><span>{draft.autonomy}</span><StatusBadge status={normalizeAgentStatus(draft.status)} /><em>{saveState === 'modified' ? 'Modified' : saveState === 'saving' ? 'Saving...' : lastSavedAt ? 'Saved just now' : 'Saved'}</em></div>
+    </div>
+    <div>
+      <button className="btn secondary" onClick={onToggleEditing}>{editing ? 'View Mode' : 'Edit Mode'}</button>
+      <button className="btn secondary" onClick={onRun}>Run Test</button>
+      <button className="btn secondary">Duplicate</button>
+      <button className="btn" disabled={saveState !== 'modified'} onClick={onSave}>{saveState === 'saving' ? 'Saving...' : 'Save Changes'}</button>
+    </div>
+  </header>
+}
+function AgentConfigTabs({step,onChange}:{step:number;onChange:(step:number)=>void}) {
+  return <nav className="agent-config-tabs">{STEPS.map((item,index)=><button key={item} className={index===step?'active':''} onClick={()=>onChange(index)}>{item}</button>)}</nav>
+}
+function AgentInspector({draft,configuredRequiredFields,issues,saveState,runPayload,runResult,onDryRun}:{draft:Draft;configuredRequiredFields:number;issues:AgentIssue[];saveState:SaveState;runPayload:string;runResult:Record<string,unknown>|null;onDryRun:()=>void}) {
+  const typed = runResult as any
+  return <aside className="agent-inspector">
+    <section>
+      <h3>Configuration Status</h3>
+      <dl>
+        <div><dt>Required fields</dt><dd>{configuredRequiredFields} / 10</dd></div>
+        <div><dt>Prompt configured</dt><dd>{draft.systemPrompt || draft.userPromptTemplate ? 'yes' : 'no'}</dd></div>
+        <div><dt>IO contract</dt><dd>{issues.some((issue)=>issue.key==='io') ? 'invalid' : 'valid'}</dd></div>
+        <div><dt>Permission scope</dt><dd>{draft.autonomy}</dd></div>
+      </dl>
+    </section>
+    <section>
+      <h3>Validation</h3>
+      <ul>{issues.map((issue)=><li key={issue.label} className={issue.level}>{issue.label}</li>)}</ul>
+    </section>
+    <section>
+      <h3>Test Run Preview</h3>
+      <label>Input sample</label>
+      <pre>{runPayload}</pre>
+      <label>Expected output</label>
+      <pre>{pretty(draft.normalizedOutputSchema)}</pre>
+      <button onClick={onDryRun}>Run dry test</button>
+      <small>{runResult ? `最近一次运行：${String(typed.result?.current?.status ?? 'completed')}` : `当前状态：${saveState === 'modified' ? '保存后可运行测试' : '尚未运行'}`}</small>
+    </section>
+  </aside>
+}
+function StatusBadge({status}:{status:string}){return <span className={`agent-status-badge ${status}`}>{capitalize(status)}</span>}
+function NewAgentModal({agents,role,templateId,name,onRoleChange,onTemplateChange,onNameChange,onClose,onCreate}:{agents:AgentDefinition[];role:string;templateId:string;name:string;onRoleChange:(value:string)=>void;onTemplateChange:(value:string)=>void;onNameChange:(value:string)=>void;onClose:()=>void;onCreate:()=>void}) {
+  return <div className="agent-modal-backdrop">
+    <section className="agent-modal">
+      <header><div><h3>New Agent</h3><p>基于模板创建 Agent 草稿，再进入配置台完善细节。</p></div><button onClick={onClose}>×</button></header>
+      <Field label="Agent 类型"><select value={role} onChange={e=>onRoleChange(e.target.value)}>{['backtest','execution','explain','portfolio'].map((item)=><option key={item}>{item}</option>)}</select></Field>
+      <Field label="模板"><select value={templateId} onChange={e=>onTemplateChange(e.target.value)}><option value="">空白模板</option>{agents.map((agent)=><option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></Field>
+      <Field label="名称"><input value={name} onChange={e=>onNameChange(e.target.value)} placeholder={`${capitalize(role)} Agent`} /></Field>
+      <footer><button className="btn secondary" onClick={onClose}>取消</button><button className="btn" onClick={onCreate}>创建草稿</button></footer>
+    </section>
+  </div>
+}
 function Field({label,children}:{label:string;children:ReactNode}){return <label className="agent-field"><span>{label}</span>{children}</label>}
 function JsonFieldArea({label,value,onChange,disabled}:{label:string;value:string;onChange:(v:string)=>void;disabled:boolean}){return <Field label={label}><textarea className="json" disabled={disabled} value={value} onChange={e=>onChange(e.target.value)} /></Field>}
 function PromptEditor({label,value,onChange,disabled}:{label:string;value:string;onChange:(v:string)=>void;disabled:boolean}) {
@@ -236,9 +354,34 @@ function CanvasNode({node,agent,selected,connecting,onSelect,onStartConnect,onRe
 
 function schemaFields(schema: Record<string, unknown>){const props=(schema.properties ?? {}) as Record<string, unknown>; return Object.keys(props)}
 function requiredFields(schema: Record<string, unknown>){return Array.isArray(schema.required)?schema.required.map(String):[]}
+type AgentIssue = { key: 'model' | 'prompt' | 'io' | 'mapping' | 'risk'; label: string; level: 'info' | 'warning' | 'error' }
+function normalizeAgentStatus(status:string){return status === 'active' ? 'active' : status === 'disabled' ? 'disabled' : 'draft'}
+function capitalize(value:string){return value ? value[0].toUpperCase() + value.slice(1) : value}
+function countConfiguredAgentFields(draft:Draft){
+  return [
+    draft.name, draft.role, draft.avatar, draft.description, draft.objective, draft.downstreamHint,
+    draft.modelConfig.provider, draft.modelConfig.model, draft.systemPrompt || draft.userPromptTemplate,
+    schemaFields(draft.normalizedOutputSchema).length > 0,
+  ].filter(Boolean).length
+}
+function validateAgentDraft(draft:Draft):AgentIssue[]{
+  const issues:AgentIssue[]=[]
+  if(!draft.modelConfig.provider || !draft.modelConfig.model) issues.push({key:'model',label:'Missing model provider',level:'error'})
+  if(!draft.systemPrompt && !draft.userPromptTemplate) issues.push({key:'prompt',label:'Prompt not configured',level:'warning'})
+  if(schemaFields(draft.inputSchema).length===0 || schemaFields(draft.outputSchema).length===0) issues.push({key:'io',label:'Raw IO contract incomplete',level:'error'})
+  if(schemaFields(draft.normalizedOutputSchema).length===0) issues.push({key:'mapping',label:'Output schema not mapped',level:'warning'})
+  if(draft.constraints.length===0) issues.push({key:'risk',label:'Risk policy not attached',level:'info'})
+  return issues
+}
 function extractPromptVariables(value:string){return Array.from(new Set(Array.from(value.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g)).map(m=>m[1])))}
 function renderPromptPreview(value:string,variables:string[]){return variables.reduce((acc,v)=>acc.replaceAll(new RegExp(`\\{\\{\\s*${escapeRegExp(v)}\\s*\\}\\}`,'g'),samplePromptValue(v)),value)}
-function samplePromptValue(name:string){if(name.toLowerCase().includes('symbol')) return '600519.SH'; if(name.toLowerCase().includes('risk')) return 'medium'; if(name.toLowerCase().includes('trace')) return 'trace-demo-001'; return `<${name}>`}
+function samplePromptValue(name: string) {
+  const n = name.toLowerCase()
+  if (n.includes('symbol')) return '000001.SZ'
+  if (n.includes('risk')) return 'medium'
+  if (n.includes('trace')) return ''
+  return ''
+}
 function escapeRegExp(value:string){return value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
 function validateWorkflow(workflow: AgentWorkflow | null, agentById: Record<string, AgentDefinition>){
  if(!workflow) return [] as string[]

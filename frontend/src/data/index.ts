@@ -1,9 +1,5 @@
 import type { MockData } from './types'
-import { cryptoMock } from './mock_crypto'
-import { ashareMock } from './mock_ashare'
+import { emptyScreens } from './emptyScreens'
 
-const market = import.meta.env.VITE_MARKET || 'ashare'
-
-export const mock: MockData = market === 'crypto' ? cryptoMock : ashareMock
-export const isCrypto = market === 'crypto'
-export const isAshare = market === 'ashare'
+/** Legacy export name kept for callers; yields empty shapes (no seeded demo curves). */
+export const mock: MockData = emptyScreens

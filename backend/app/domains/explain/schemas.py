@@ -90,3 +90,12 @@ class ExplainScreen(BaseModel):
     lineage: list[LineageStep]
     biasGate: list[BiasGateOut]
     similarHistory: SimilarHistory
+
+
+class ExplainApproveIn(BaseModel):
+    traceId: str
+
+
+class ExplainApproveOut(BaseModel):
+    traceId: str
+    status: str  # approved | ignored if already approved

@@ -21,16 +21,23 @@ from app.domains.execution.paper_models import (
     PaperRiskBreach,
 )
 from app.domains.execution.paper_schemas import (
+    PaperAccountBindStrategyIn,
     PaperAccountCreateIn,
     PaperAccountOut,
     PaperFillOut,
+    PaperEvaluationSnapshotOut,
     PaperNavPointOut,
     PaperOrderOut,
     PaperPositionOut,
     PaperRiskBreachOut,
+    PaperTargetPositionOut,
+    ManualPaperOrderIn,
+    MatchPaperOrdersIn,
+    ReplacePaperOrderIn,
     RunEodIn,
     RunEodOut,
 )
+from app.domains.strategy.models import Strategy, StrategyVersion
 from app.services.paper_trading import PaperTradingEngine
 
 router = APIRouter()
@@ -86,12 +93,34 @@ async def get_paper_account(account_id: str, db: DbSession) -> PaperAccountOut:
     return _account_out(account)
 
 
+@router.put("/accounts/{account_id}/strategy", response_model=PaperAccountOut)
+async def bind_paper_account_strategy(
+    account_id: str,
+    payload: PaperAccountBindStrategyIn,
+    db: DbSession,
+) -> PaperAccountOut:
+    account = await _require_account(db, account_id)
+    strategy = await db.get(Strategy, payload.strategy_id)
+    if strategy is None or strategy.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="strategy not found")
+    version = await db.get(StrategyVersion, payload.strategy_version_id)
+    if version is None or version.strategy_id != strategy.id:
+        raise HTTPException(status_code=400, detail="strategy version does not belong to strategy")
+    account.strategy_id = strategy.id
+    account.strategy_version_id = version.id
+    await db.commit()
+    await db.refresh(account)
+    return _account_out(account)
+
+
 # ── positions / orders / fills / nav / breaches ─────────────────────────
 
 
 @router.get("/accounts/{account_id}/positions", response_model=list[PaperPositionOut])
 async def list_paper_positions(account_id: str, db: DbSession) -> list[PaperPositionOut]:
     await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    availability = await engine.available_position_quantities(account_id)
     rows = (
         await db.execute(
             select(PaperPosition).where(
@@ -104,6 +133,8 @@ async def list_paper_positions(account_id: str, db: DbSession) -> list[PaperPosi
         PaperPositionOut(
             symbol=p.symbol,
             quantity=p.quantity,
+            availableQuantity=availability.get(p.symbol, (p.quantity, 0.0))[0],
+            todayBuyQuantity=availability.get(p.symbol, (p.quantity, 0.0))[1],
             avgCost=p.avg_cost,
             lastPrice=p.last_price,
             marketValue=p.market_value,
@@ -111,6 +142,90 @@ async def list_paper_positions(account_id: str, db: DbSession) -> list[PaperPosi
         )
         for p in rows
     ]
+
+
+@router.post("/accounts/{account_id}/orders", response_model=PaperOrderOut)
+async def submit_manual_paper_order(
+    account_id: str,
+    payload: ManualPaperOrderIn,
+    db: DbSession,
+) -> PaperOrderOut:
+    await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    try:
+        order = await engine.submit_manual_order(
+            account_id,
+            symbol=payload.symbol,
+            side=payload.side,
+            quantity=payload.quantity,
+            trade_date=payload.trade_date,
+            reason=payload.reason,
+            execution_mode=payload.execution_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PaperOrderOut(
+        id=order.id,
+        accountId=order.account_id,
+        strategyId=order.strategy_id,
+        tradeDate=order.trade_date,
+        symbol=order.symbol,
+        side=order.side,
+        targetWeight=order.target_weight,
+        targetQuantity=order.target_quantity,
+        filledQuantity=order.filled_quantity,
+        status=order.status,
+        reason=order.reason,
+        rejectionReason=order.rejection_reason,
+    )
+
+
+@router.patch("/accounts/{account_id}/orders/{order_id}", response_model=PaperOrderOut)
+async def replace_manual_paper_order(
+    account_id: str,
+    order_id: str,
+    payload: ReplacePaperOrderIn,
+    db: DbSession,
+) -> PaperOrderOut:
+    await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    try:
+        order = await engine.replace_order(account_id, order_id, quantity=payload.quantity)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _order_out(order)
+
+
+@router.post("/accounts/{account_id}/orders/{order_id}/cancel", response_model=PaperOrderOut)
+async def cancel_manual_paper_order(
+    account_id: str,
+    order_id: str,
+    db: DbSession,
+) -> PaperOrderOut:
+    await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    try:
+        order = await engine.cancel_order(account_id, order_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _order_out(order)
+
+
+@router.post("/accounts/{account_id}/orders/match")
+async def match_manual_paper_orders(
+    account_id: str,
+    payload: MatchPaperOrdersIn,
+    db: DbSession,
+) -> dict[str, int]:
+    await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    try:
+        filled, rejected = await engine.match_pending_orders(
+            account_id, trade_date=payload.trade_date
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ordersFilled": filled, "ordersRejected": rejected}
 
 
 @router.get("/accounts/{account_id}/orders", response_model=list[PaperOrderOut])
@@ -129,22 +244,43 @@ async def list_paper_orders(
         )
     ).scalars().all()
     return [
-        PaperOrderOut(
-            id=o.id,
-            accountId=o.account_id,
-            strategyId=o.strategy_id,
-            tradeDate=o.trade_date,
-            symbol=o.symbol,
-            side=o.side,
-            targetWeight=o.target_weight,
-            targetQuantity=o.target_quantity,
-            filledQuantity=o.filled_quantity,
-            status=o.status,
-            reason=o.reason,
-            rejectionReason=o.rejection_reason,
-        )
+        _order_out(o)
         for o in rows
     ]
+
+
+@router.get(
+    "/accounts/{account_id}/evaluation",
+    response_model=PaperEvaluationSnapshotOut,
+)
+async def get_paper_evaluation_snapshot(
+    account_id: str,
+    db: DbSession,
+) -> PaperEvaluationSnapshotOut:
+    await _require_account(db, account_id)
+    engine = PaperTradingEngine(db)
+    snapshot = await engine.evaluation_snapshot(account_id)
+    return PaperEvaluationSnapshotOut(
+        tradeDate=snapshot.trade_date,
+        sessionStatus=snapshot.session_status,
+        strategyBound=snapshot.strategy_bound,
+        targetGross=snapshot.target_gross,
+        currentGross=snapshot.current_gross,
+        driftGross=snapshot.drift_gross,
+        targets=[
+            PaperTargetPositionOut(
+                symbol=row.symbol,
+                targetWeight=row.target_weight,
+                currentWeight=row.current_weight,
+                driftWeight=row.drift_weight,
+                targetQuantity=row.target_quantity,
+                currentQuantity=row.current_quantity,
+                recommendedAction=row.recommended_action,
+                reason=row.reason,
+            )
+            for row in snapshot.targets
+        ],
+    )
 
 
 @router.get("/accounts/{account_id}/fills", response_model=list[PaperFillOut])
@@ -265,6 +401,23 @@ def _account_out(a: PaperAccount) -> PaperAccountOut:
         lastProcessedDate=a.last_processed_date,
         peakNav=a.peak_nav,
         status=a.status,
+    )
+
+
+def _order_out(o: PaperOrder) -> PaperOrderOut:
+    return PaperOrderOut(
+        id=o.id,
+        accountId=o.account_id,
+        strategyId=o.strategy_id,
+        tradeDate=o.trade_date,
+        symbol=o.symbol,
+        side=o.side,
+        targetWeight=o.target_weight,
+        targetQuantity=o.target_quantity,
+        filledQuantity=o.filled_quantity,
+        status=o.status,
+        reason=o.reason,
+        rejectionReason=o.rejection_reason,
     )
 
 

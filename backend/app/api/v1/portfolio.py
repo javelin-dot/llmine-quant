@@ -9,14 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.domains.portfolio.models import NAVSnapshot, RebalanceProposal
 from app.domains.portfolio.schemas import (
-    Allocation,
-    AllocationStrategy,
-    Concentration,
-    ConcentrationFactor,
-    ConcentrationHolding,
-    ConcentrationSector,
-    Correlation,
     NAV,
+    Allocation,
+    Concentration,
+    Correlation,
     PortfolioScreen,
     RebalanceAction,
     RiskBudget,
@@ -28,60 +24,15 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 _URGENCY_TONE = {"high": "red", "medium": "yellow", "low": "green"}
 
-# ── Static data (strategy allocation, correlation, concentration) ─────────────
-# These require strategy performance data that will be populated from backtest/
-# paper trading in a later sprint. Kept as representative constants.
+# ── Static overlays (risk budget slice, allocations) — wired from portfolio analytics later ──
 
-_RISK_BUDGET = [
-    RiskBudget(label="总风险预算使用率", pct=0.65, limit=0.85, tone="green", desc="距 85% 阈值仍有 20pt 缓冲"),
-    RiskBudget(label="单策略最大占比", pct=0.30, limit=0.35, tone="yellow", desc="Value-ROE 30%,接近 35% 上限"),
-    RiskBudget(label="行业集中度", pct=0.18, limit=0.25, tone="green", desc="消费板块 18%,在安全区间"),
-    RiskBudget(label="现金缓冲", pct=0.18, limit=0.10, tone="blue", desc="高于 10% 下限,可承接调仓"),
-]
+_RISK_BUDGET: list[RiskBudget] = []
 
-_ALLOCATION = Allocation(
-    strategies=[
-        AllocationStrategy(name="Value-ROE-v12", family="价值", weight=0.30, pnl=412000.0, pnlPct=0.158, risk="A-", status="live", statusTone="green", contribution=0.42, sparkline=[1.00, 1.02, 1.03, 1.05, 1.08, 1.10, 1.13, 1.15, 1.16]),
-        AllocationStrategy(name="Trend-MA-v8", family="趋势", weight=0.18, pnl=186000.0, pnlPct=0.142, risk="B+", status="live", statusTone="green", contribution=0.18, sparkline=[1.00, 1.01, 1.04, 1.03, 1.06, 1.08, 1.11, 1.12, 1.14]),
-        AllocationStrategy(name="XGBoost-Alpha", family="ML", weight=0.10, pnl=98400.0, pnlPct=0.218, risk="B", status="live", statusTone="green", contribution=0.11, sparkline=[1.00, 1.03, 1.05, 1.08, 1.12, 1.15, 1.18, 1.20, 1.22]),
-        AllocationStrategy(name="NewEnergy-Pair", family="配对", weight=0.04, pnl=-12400.0, pnlPct=-0.034, risk="B-", status="paper", statusTone="yellow", contribution=-0.01, sparkline=[1.00, 1.02, 1.01, 0.99, 0.98, 0.97, 0.97, 0.96, 0.97]),
-        AllocationStrategy(name="现金缓冲", family="现金", weight=0.18, pnl=1840.0, pnlPct=0.0001, risk="A+", status="live", statusTone="blue", contribution=0.01, sparkline=[1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]),
-    ],
-)
+_ALLOCATION = Allocation(strategies=[])
 
-_CORRELATION = Correlation(
-    labels=["Value", "Trend", "XGB", "Pair", "Cash"],
-    matrix=[
-        [1.00, 0.32, 0.28, 0.12, 0.05],
-        [0.32, 1.00, 0.42, 0.22, 0.04],
-        [0.28, 0.42, 1.00, 0.14, 0.03],
-        [0.12, 0.22, 0.14, 1.00, 0.02],
-        [0.05, 0.04, 0.03, 0.02, 1.00],
-    ],
-)
+_CORRELATION = Correlation(labels=[], matrix=[])
 
-_CONCENTRATION = Concentration(
-    sectors=[
-        ConcentrationSector(name="消费", weight=0.18, change=0.012),
-        ConcentrationSector(name="科技", weight=0.16, change=0.024),
-        ConcentrationSector(name="金融", weight=0.14, change=-0.008),
-        ConcentrationSector(name="新能源", weight=0.12, change=-0.018),
-        ConcentrationSector(name="医药", weight=0.10, change=0.006),
-    ],
-    holdings=[
-        ConcentrationHolding(symbol="600519", name="贵州茅台", weight=0.082, change=0.018),
-        ConcentrationHolding(symbol="300750", name="宁德时代", weight=0.064, change=-0.024),
-        ConcentrationHolding(symbol="600036", name="招商银行", weight=0.058, change=0.006),
-        ConcentrationHolding(symbol="000333", name="美的集团", weight=0.052, change=0.014),
-        ConcentrationHolding(symbol="002594", name="比亚迪", weight=0.048, change=-0.012),
-    ],
-    factors=[
-        ConcentrationFactor(name="Value 价值", exposure=0.42, tone="green"),
-        ConcentrationFactor(name="Quality 质量", exposure=0.38, tone="green"),
-        ConcentrationFactor(name="Momentum 动量", exposure=0.24, tone="blue"),
-        ConcentrationFactor(name="Size 规模", exposure=-0.18, tone="yellow"),
-    ],
-)
+_CONCENTRATION = Concentration(sectors=[], holdings=[], factors=[])
 
 
 async def _get_nav(db: AsyncSession) -> NAV:

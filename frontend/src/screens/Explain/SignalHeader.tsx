@@ -1,10 +1,18 @@
 import { useExplain } from '../../contexts/ExplainContext'
 
 interface SignalHeaderProps {
-  onModal?: (target: string) => void
+  canApprove: boolean
+  busy: boolean
+  onRequestApprove: () => void
+  onExport: () => void
 }
 
-export default function SignalHeader({ onModal }: SignalHeaderProps) {
+export default function SignalHeader({
+  canApprove,
+  busy,
+  onRequestApprove,
+  onExport,
+}: SignalHeaderProps) {
   const data = useExplain()
   const h = data.signalHeader
   const actionTone = h.action === 'BUY' ? 'pos' : h.action === 'SELL' ? 'neg' : 'neutral'
@@ -54,7 +62,9 @@ export default function SignalHeader({ onModal }: SignalHeaderProps) {
         </div>
         <div className="ex-grade">
           <span className="ex-grade-label">Risk</span>
-          <strong className="ex-grade-value">{h.riskGrade}</strong>
+          <strong className="ex-grade-value">
+            {h.riskGrade === '—' ? '—' : h.riskGrade.startsWith('RISK') ? h.riskGrade : `RISK ${h.riskGrade}`}
+          </strong>
         </div>
         <div className="ex-trace">
           <span className="ex-trace-label">Trace</span>
@@ -66,8 +76,17 @@ export default function SignalHeader({ onModal }: SignalHeaderProps) {
           <i className={`ex-status-dot status-dot-${h.statusTone}`} />
           {h.status}
         </span>
-        <button className="ex-header-btn primary" onClick={() => onModal?.('approve')}>批准</button>
-        <button className="ex-header-btn secondary">导出</button>
+        <button
+          type="button"
+          className="ex-header-btn primary"
+          disabled={!canApprove || busy}
+          onClick={onRequestApprove}
+        >
+          批准
+        </button>
+        <button type="button" className="ex-header-btn secondary" disabled={busy} onClick={onExport}>
+          导出
+        </button>
       </div>
     </div>
   )

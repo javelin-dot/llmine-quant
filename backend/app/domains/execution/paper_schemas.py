@@ -35,9 +35,18 @@ class PaperAccountOut(BaseModel):
     status: str
 
 
+class PaperAccountBindStrategyIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    strategy_id: str = Field(alias="strategyId")
+    strategy_version_id: str = Field(alias="strategyVersionId")
+
+
 class PaperPositionOut(BaseModel):
     symbol: str
     quantity: float
+    availableQuantity: float
+    todayBuyQuantity: float
     avgCost: float
     lastPrice: float | None
     marketValue: float
@@ -57,6 +66,50 @@ class PaperOrderOut(BaseModel):
     status: str
     reason: str | None
     rejectionReason: str | None
+
+
+class ManualPaperOrderIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    symbol: str
+    side: str
+    quantity: float
+    trade_date: str | None = Field(default=None, alias="tradeDate")
+    reason: str | None = None
+    execution_mode: str = Field(default="immediate", alias="executionMode")
+
+
+class ReplacePaperOrderIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    quantity: float
+
+
+class MatchPaperOrdersIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    trade_date: str | None = Field(default=None, alias="tradeDate")
+
+
+class PaperTargetPositionOut(BaseModel):
+    symbol: str
+    targetWeight: float
+    currentWeight: float
+    driftWeight: float
+    targetQuantity: float
+    currentQuantity: float
+    recommendedAction: str
+    reason: str | None
+
+
+class PaperEvaluationSnapshotOut(BaseModel):
+    tradeDate: str | None
+    sessionStatus: str
+    strategyBound: bool
+    targetGross: float
+    currentGross: float
+    driftGross: float
+    targets: list[PaperTargetPositionOut]
 
 
 class PaperFillOut(BaseModel):

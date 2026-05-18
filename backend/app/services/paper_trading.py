@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -68,6 +69,29 @@ class EodSummary:
     orders_rejected: int
     breaches: int
     nav: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class TargetDriftRow:
+    symbol: str
+    target_weight: float
+    current_weight: float
+    drift_weight: float
+    target_quantity: float
+    current_quantity: float
+    recommended_action: str
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationSnapshot:
+    trade_date: str | None
+    session_status: str
+    strategy_bound: bool
+    target_gross: float
+    current_gross: float
+    drift_gross: float
+    targets: tuple[TargetDriftRow, ...]
 
 
 # ── engine ──────────────────────────────────────────────────────────────
@@ -133,6 +157,241 @@ class PaperTradingEngine:
             nav=nav,
         )
 
+    async def submit_manual_order(
+        self,
+        account_id: str,
+        *,
+        symbol: str,
+        side: str,
+        quantity: float,
+        trade_date: str | None = None,
+        reason: str | None = None,
+        execution_mode: str = "immediate",
+    ) -> PaperOrder:
+        """Submit a manual order, optionally queueing it before later matching.
+
+        Matching remains intentionally conservative: it uses the latest persisted
+        daily bar as the execution reference until intraday market data is wired in.
+        """
+        account = await self.session.get(PaperAccount, account_id)
+        if account is None:
+            raise ValueError(f"PaperAccount {account_id} not found")
+        if account.status != "active":
+            raise ValueError("paper account is not active")
+        side = side.lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        execution_mode = execution_mode.lower()
+        if execution_mode not in {"immediate", "queue"}:
+            raise ValueError("execution_mode must be immediate or queue")
+
+        bar = await self._latest_bar(symbol, trade_date)
+        if bar is None:
+            raise ValueError(f"no market bar found for {symbol}")
+        actual_trade_date = trade_date or bar.trade_date
+        if account.market.upper() in {"A", "ASHARE"}:
+            quantity = _normalize_ashare_quantity(quantity, side)
+            if quantity <= 0:
+                raise ValueError("A-share buy orders must be at least 100 shares")
+
+        positions = await self._load_positions(account.id)
+        await self._mark_to_market(account, positions, {symbol: bar})
+        order = PaperOrder(
+            account_id=account.id,
+            strategy_id=account.strategy_id,
+            trade_date=actual_trade_date,
+            symbol=symbol,
+            side=side,
+            target_weight=0.0,
+            target_quantity=quantity,
+            status="pending",
+            reason=reason or "manual_order",
+        )
+        self.session.add(order)
+        await self.session.flush()
+
+        if execution_mode == "queue":
+            await self.session.commit()
+            await self.session.refresh(order)
+            return order
+
+        pre_rebalance_nav = _equity(account, positions)
+        blocked = await self._run_pre_trade_checks(
+            account, [order], positions, {symbol: bar}, pre_rebalance_nav
+        )
+        await self._execute_orders(
+            account=account,
+            orders=[order],
+            positions=positions,
+            bars_today={symbol: bar},
+            cost_config=_cost_config_from_account(account),
+            already_rejected_ids=blocked,
+        )
+        await self._mark_to_market(account, positions, {symbol: bar})
+        await self._write_nav(account, actual_trade_date, positions)
+        await self.session.commit()
+        await self.session.refresh(order)
+        return order
+
+    async def cancel_order(self, account_id: str, order_id: str) -> PaperOrder:
+        order = await self._require_order(account_id, order_id)
+        if order.status not in {"pending", "approved"}:
+            raise ValueError("only pending orders can be cancelled")
+        order.status = "canceled"
+        await self.session.commit()
+        await self.session.refresh(order)
+        return order
+
+    async def replace_order(
+        self, account_id: str, order_id: str, *, quantity: float
+    ) -> PaperOrder:
+        order = await self._require_order(account_id, order_id)
+        if order.status not in {"pending", "approved"}:
+            raise ValueError("only pending orders can be replaced")
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        account = await self.session.get(PaperAccount, account_id)
+        assert account is not None  # guaranteed by _require_order path
+        if account.market.upper() in {"A", "ASHARE"}:
+            quantity = _normalize_ashare_quantity(quantity, order.side)
+            if quantity <= 0:
+                raise ValueError("A-share buy orders must be at least 100 shares")
+        order.target_quantity = quantity
+        order.rejection_reason = None
+        await self.session.commit()
+        await self.session.refresh(order)
+        return order
+
+    async def match_pending_orders(
+        self, account_id: str, trade_date: str | None = None
+    ) -> tuple[int, int]:
+        account = await self.session.get(PaperAccount, account_id)
+        if account is None:
+            raise ValueError(f"PaperAccount {account_id} not found")
+        orders = (
+            await self.session.execute(
+                select(PaperOrder).where(
+                    PaperOrder.account_id == account_id,
+                    PaperOrder.status.in_(("pending", "approved")),
+                )
+            )
+        ).scalars().all()
+        if not orders:
+            return 0, 0
+
+        bars_today: dict[str, MarketBarDaily] = {}
+        for symbol in sorted({order.symbol for order in orders}):
+            bar = await self._latest_bar(symbol, trade_date)
+            if bar is None:
+                for order in orders:
+                    if order.symbol == symbol:
+                        order.status = "rejected"
+                        order.rejection_reason = f"no market bar found for {symbol}"
+                continue
+            bars_today[symbol] = bar
+        executable = [order for order in orders if order.symbol in bars_today]
+        if not executable:
+            await self.session.commit()
+            return 0, len(orders)
+
+        actual_trade_date = trade_date or max(bar.trade_date for bar in bars_today.values())
+        for order in executable:
+            order.trade_date = actual_trade_date
+        positions = await self._load_positions(account.id)
+        await self._mark_to_market(account, positions, bars_today)
+        pre_rebalance_nav = _equity(account, positions)
+        blocked = await self._run_pre_trade_checks(
+            account, executable, positions, bars_today, pre_rebalance_nav
+        )
+        filled, rejected_runtime = await self._execute_orders(
+            account=account,
+            orders=executable,
+            positions=positions,
+            bars_today=bars_today,
+            cost_config=_cost_config_from_account(account),
+            already_rejected_ids=blocked,
+        )
+        await self._mark_to_market(account, positions, bars_today)
+        await self._write_nav(account, actual_trade_date, positions)
+        await self.session.commit()
+        rejected_missing_bar = len(orders) - len(executable)
+        return filled, len(blocked) + rejected_runtime + rejected_missing_bar
+
+    async def evaluation_snapshot(self, account_id: str) -> EvaluationSnapshot:
+        account = await self.session.get(PaperAccount, account_id)
+        if account is None:
+            raise ValueError(f"PaperAccount {account_id} not found")
+        latest_date = await self._latest_market_trade_date()
+        if not account.strategy_version_id:
+            positions = await self._load_positions(account.id)
+            if latest_date is not None and positions:
+                bars_today = await self._bars_for_date(latest_date)
+                await self._mark_to_market(account, positions, bars_today)
+            current_gross = sum(abs(pos.weight) for pos in positions.values())
+            return EvaluationSnapshot(
+                trade_date=latest_date,
+                session_status=_ashare_session_status(),
+                strategy_bound=False,
+                target_gross=0.0,
+                current_gross=current_gross,
+                drift_gross=0.0,
+                targets=(),
+            )
+        if latest_date is None:
+            return EvaluationSnapshot(
+                trade_date=None,
+                session_status=_ashare_session_status(),
+                strategy_bound=True,
+                target_gross=0.0,
+                current_gross=0.0,
+                drift_gross=0.0,
+                targets=(),
+            )
+        bars_today = await self._bars_for_date(latest_date)
+        positions = await self._load_positions(account.id)
+        await self._mark_to_market(account, positions, bars_today)
+        targets = await self._compute_targets(account, latest_date, bars_today)
+        equity = _equity(account, positions)
+        rows: list[TargetDriftRow] = []
+        all_symbols = sorted(set(targets) | set(positions))
+        for symbol in all_symbols:
+            target_weight, reason = targets.get(symbol, (0.0, None))
+            current = positions.get(symbol)
+            current_weight = current.weight if current else 0.0
+            mark = bars_today.get(symbol)
+            px = (mark.adjusted_close or mark.close) if mark else (current.last_price if current else None)
+            target_quantity = (target_weight * equity / px) if px and px > 0 else 0.0
+            if account.market.upper() in {"A", "ASHARE"}:
+                target_quantity = _normalize_ashare_quantity(target_quantity, "buy")
+            current_quantity = current.quantity if current else 0.0
+            drift = target_weight - current_weight
+            rows.append(
+                TargetDriftRow(
+                    symbol=symbol,
+                    target_weight=target_weight,
+                    current_weight=current_weight,
+                    drift_weight=drift,
+                    target_quantity=target_quantity,
+                    current_quantity=current_quantity,
+                    recommended_action=_recommended_action(current_weight, target_weight),
+                    reason=reason,
+                )
+            )
+        target_gross = sum(abs(row.target_weight) for row in rows)
+        current_gross = sum(abs(row.current_weight) for row in rows)
+        drift_gross = sum(abs(row.drift_weight) for row in rows)
+        return EvaluationSnapshot(
+            trade_date=latest_date,
+            session_status=_ashare_session_status(),
+            strategy_bound=True,
+            target_gross=target_gross,
+            current_gross=current_gross,
+            drift_gross=drift_gross,
+            targets=tuple(rows),
+        )
+
     # ── internals ────────────────────────────────────────────────────────
 
     async def _bars_for_date(self, trade_date: str) -> dict[str, MarketBarDaily]:
@@ -142,6 +401,31 @@ class PaperTradingEngine:
             )
         ).scalars().all()
         return {b.symbol: b for b in rows}
+
+    async def _latest_market_trade_date(self) -> str | None:
+        return (
+            await self.session.execute(
+                select(MarketBarDaily.trade_date)
+                .order_by(MarketBarDaily.trade_date.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    async def _latest_bar(
+        self, symbol: str, trade_date: str | None = None
+    ) -> MarketBarDaily | None:
+        stmt = select(MarketBarDaily).where(MarketBarDaily.symbol == symbol)
+        if trade_date:
+            stmt = stmt.where(MarketBarDaily.trade_date == trade_date)
+        else:
+            stmt = stmt.order_by(MarketBarDaily.trade_date.desc()).limit(1)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def _require_order(self, account_id: str, order_id: str) -> PaperOrder:
+        order = await self.session.get(PaperOrder, order_id)
+        if order is None or order.account_id != account_id:
+            raise ValueError("paper order not found")
+        return order
 
     async def _bars_history(
         self, symbols: tuple[str, ...], up_to: str, limit_per_symbol: int = 200
@@ -204,7 +488,11 @@ class PaperTradingEngine:
         """Return ``{symbol: (target_weight, reason)}`` for the given trade date."""
         universe, params = await self._resolve_strategy_params(account)
         if not universe:
-            universe = tuple(sorted(bars_today.keys()))
+            # Unbound paper accounts should stay cheap to inspect. Falling back to
+            # the entire market makes evaluation_snapshot() fetch every symbol's
+            # full history and can effectively freeze the local SQLite dev server.
+            fallback_size = max(1, int(params.get("max_positions", 20)))
+            universe = tuple(sorted(bars_today.keys())[:fallback_size])
         if not universe:
             return {}
 
@@ -285,6 +573,8 @@ class PaperTradingEngine:
                 continue
             mark = bar.adjusted_close or bar.close
             target_qty = (target_weight * equity / mark) if mark > 0 else 0.0
+            if account.market.upper() in {"A", "ASHARE"}:
+                target_qty = _normalize_ashare_quantity(target_qty, "buy")
             current_qty = positions[symbol].quantity if symbol in positions else 0.0
             delta = target_qty - current_qty
             if abs(delta * mark) < 1e-3:
@@ -403,6 +693,8 @@ class PaperTradingEngine:
                 commission = max(gross_amount * cost_config.commission_rate, cost_config.min_commission if gross_amount > 0 else 0.0)
                 # Re-cap quantity to what cash allows after costs.
                 affordable_qty = _affordable_buy_qty(account.cash, exec_price, cost_config)
+                if account.market.upper() in {"A", "ASHARE"}:
+                    affordable_qty = _normalize_ashare_quantity(affordable_qty, "buy")
                 qty = min(qty, affordable_qty)
                 if qty <= 0:
                     order.status = "rejected"
@@ -460,7 +752,15 @@ class PaperTradingEngine:
                     order.rejection_reason = "no position to sell"
                     rejected_runtime += 1
                     continue
-                qty = min(qty, pos.quantity)
+                available_qty = await self._available_sell_quantity(
+                    account.id, order.symbol, order.trade_date, pos.quantity
+                )
+                qty = min(qty, available_qty)
+                if qty <= 0:
+                    order.status = "rejected"
+                    order.rejection_reason = "T+1 unavailable quantity"
+                    rejected_runtime += 1
+                    continue
                 amount = qty * exec_price
                 commission = max(amount * cost_config.commission_rate, cost_config.min_commission)
                 stamp_tax = amount * cost_config.stamp_tax_rate
@@ -497,6 +797,53 @@ class PaperTradingEngine:
         await self.session.flush()
         return filled, rejected_runtime
 
+    async def available_position_quantities(
+        self, account_id: str
+    ) -> dict[str, tuple[float, float]]:
+        positions = await self._load_positions(account_id)
+        current_trade_date = await self._latest_account_trade_date(account_id)
+        out: dict[str, tuple[float, float]] = {}
+        for symbol, pos in positions.items():
+            today_buys = await self._today_buy_quantity(
+                account_id, symbol, current_trade_date
+            ) if current_trade_date else 0.0
+            out[symbol] = (max(0.0, pos.quantity - today_buys), today_buys)
+        return out
+
+    async def _latest_account_trade_date(
+        self, account_id: str
+    ) -> str | None:
+        row = (
+            await self.session.execute(
+                select(PaperFill.trade_date)
+                .where(PaperFill.account_id == account_id)
+                .order_by(PaperFill.trade_date.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return row
+
+    async def _today_buy_quantity(
+        self, account_id: str, symbol: str, trade_date: str
+    ) -> float:
+        rows = (
+            await self.session.execute(
+                select(PaperFill).where(
+                    PaperFill.account_id == account_id,
+                    PaperFill.symbol == symbol,
+                    PaperFill.trade_date == trade_date,
+                    PaperFill.side == "buy",
+                )
+            )
+        ).scalars().all()
+        return sum(fill.quantity for fill in rows)
+
+    async def _available_sell_quantity(
+        self, account_id: str, symbol: str, trade_date: str, current_quantity: float
+    ) -> float:
+        today_buys = await self._today_buy_quantity(account_id, symbol, trade_date)
+        return max(0.0, current_quantity - today_buys)
+
     async def _write_nav(
         self,
         account: PaperAccount,
@@ -508,7 +855,10 @@ class PaperTradingEngine:
         prev = (
             await self.session.execute(
                 select(PaperNavPoint)
-                .where(PaperNavPoint.account_id == account.id)
+                .where(
+                    PaperNavPoint.account_id == account.id,
+                    PaperNavPoint.trade_date < trade_date,
+                )
                 .order_by(PaperNavPoint.trade_date.desc())
                 .limit(1)
             )
@@ -519,17 +869,32 @@ class PaperTradingEngine:
         peak = max(account.peak_nav or 0.0, nav)
         account.peak_nav = peak
         drawdown = (nav / peak - 1) if peak > 0 else 0.0
-        self.session.add(
-            PaperNavPoint(
-                account_id=account.id,
-                trade_date=trade_date,
-                nav=nav,
-                cash=account.cash,
-                market_value=market_value,
-                daily_return=daily_return,
-                drawdown=drawdown,
+        same_day = (
+            await self.session.execute(
+                select(PaperNavPoint).where(
+                    PaperNavPoint.account_id == account.id,
+                    PaperNavPoint.trade_date == trade_date,
+                )
             )
-        )
+        ).scalar_one_or_none()
+        if same_day is None:
+            self.session.add(
+                PaperNavPoint(
+                    account_id=account.id,
+                    trade_date=trade_date,
+                    nav=nav,
+                    cash=account.cash,
+                    market_value=market_value,
+                    daily_return=daily_return,
+                    drawdown=drawdown,
+                )
+            )
+        else:
+            same_day.nav = nav
+            same_day.cash = account.cash
+            same_day.market_value = market_value
+            same_day.daily_return = daily_return
+            same_day.drawdown = drawdown
         await self.session.flush()
         return nav
 
@@ -629,5 +994,37 @@ def _affordable_buy_qty(cash: float, price: float, cost_config: BacktestCostConf
     return max(qty, 0.0)
 
 
+def _normalize_ashare_quantity(quantity: float, side: str) -> float:
+    if side == "buy":
+        return float(int(quantity // 100) * 100)
+    return float(int(quantity))
+
+
 def _equity(account: PaperAccount, positions: dict[str, PaperPosition]) -> float:
     return account.cash + sum((p.market_value or 0.0) for p in positions.values())
+
+
+def _recommended_action(current_weight: float, target_weight: float) -> str:
+    if current_weight <= 1e-9 and target_weight > 1e-9:
+        return "open"
+    if current_weight > 1e-9 and target_weight <= 1e-9:
+        return "close"
+    if target_weight > current_weight + 1e-6:
+        return "increase"
+    if target_weight < current_weight - 1e-6:
+        return "decrease"
+    return "hold"
+
+
+def _ashare_session_status(now: datetime | None = None) -> str:
+    current = now or datetime.now()
+    hhmm = current.hour * 100 + current.minute
+    if 915 <= hhmm < 925:
+        return "call_auction"
+    if 930 <= hhmm < 1130 or 1300 <= hhmm < 1457:
+        return "continuous"
+    if 1457 <= hhmm < 1500:
+        return "closing_auction"
+    if 1130 <= hhmm < 1300:
+        return "lunch_break"
+    return "closed"

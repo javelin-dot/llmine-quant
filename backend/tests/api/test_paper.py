@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.db.base import Base
 from app.db.session import get_db
 from app.domains.data.models import MarketBarDaily
+from app.domains.strategy.models import Strategy, StrategyVersion
 from app.main import app
 
 
@@ -108,3 +109,151 @@ async def test_paper_run_eod_returns_404_for_unknown_account(client_session):
         json={"tradeDate": "2024-01-25"},
     )
     assert resp.status_code == 404
+
+
+async def test_manual_order_supports_buy_and_t1_sell_rejection(client_session):
+    client, session = client_session
+    last_date = await _seed_universe(session, ["600519.SH"], 1)
+    account = (
+        await client.post("/api/v1/paper/accounts", json={
+            "name": "manual-paper",
+            "ownerId": "tester",
+            "initialCash": 100_000,
+        })
+    ).json()
+    aid = account["id"]
+
+    buy = await client.post(
+        f"/api/v1/paper/accounts/{aid}/orders",
+        json={"symbol": "600519.SH", "side": "buy", "quantity": 150, "tradeDate": last_date},
+    )
+    assert buy.status_code == 200
+    assert buy.json()["targetQuantity"] == 100
+    assert buy.json()["status"] == "filled"
+
+    positions = (await client.get(f"/api/v1/paper/accounts/{aid}/positions")).json()
+    assert positions[0]["quantity"] == 100
+    assert positions[0]["availableQuantity"] == 0
+    assert positions[0]["todayBuyQuantity"] == 100
+
+    sell = await client.post(
+        f"/api/v1/paper/accounts/{aid}/orders",
+        json={"symbol": "600519.SH", "side": "sell", "quantity": 100, "tradeDate": last_date},
+    )
+    assert sell.status_code == 200
+    assert sell.json()["status"] == "rejected"
+    assert sell.json()["rejectionReason"] == "T+1 unavailable quantity"
+
+
+async def test_manual_order_lifecycle_endpoints(client_session):
+    client, session = client_session
+    last_date = await _seed_universe(session, ["600519.SH"], 1)
+    account = (
+        await client.post("/api/v1/paper/accounts", json={
+            "name": "lifecycle-paper",
+            "ownerId": "tester",
+            "initialCash": 100_000,
+        })
+    ).json()
+    aid = account["id"]
+
+    queued = await client.post(
+        f"/api/v1/paper/accounts/{aid}/orders",
+        json={
+            "symbol": "600519.SH",
+            "side": "buy",
+            "quantity": 180,
+            "tradeDate": last_date,
+            "executionMode": "queue",
+        },
+    )
+    assert queued.status_code == 200
+    order = queued.json()
+    assert order["status"] == "pending"
+    assert order["targetQuantity"] == 100
+
+    replaced = await client.patch(
+        f"/api/v1/paper/accounts/{aid}/orders/{order['id']}",
+        json={"quantity": 260},
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["targetQuantity"] == 200
+
+    matched = await client.post(
+        f"/api/v1/paper/accounts/{aid}/orders/match",
+        json={"tradeDate": last_date},
+    )
+    assert matched.status_code == 200
+    assert matched.json() == {"ordersFilled": 1, "ordersRejected": 0}
+
+    cancel_target = (
+        await client.post(
+            f"/api/v1/paper/accounts/{aid}/orders",
+            json={
+                "symbol": "600519.SH",
+                "side": "buy",
+                "quantity": 100,
+                "tradeDate": last_date,
+                "executionMode": "queue",
+            },
+        )
+    ).json()
+    canceled = await client.post(
+        f"/api/v1/paper/accounts/{aid}/orders/{cancel_target['id']}/cancel"
+    )
+    assert canceled.status_code == 200
+    assert canceled.json()["status"] == "canceled"
+
+
+async def test_paper_evaluation_snapshot_is_empty_without_bound_strategy(client_session):
+    client, session = client_session
+    await _seed_universe(session, [f"00000{i}.SZ" for i in range(1, 13)], 25)
+    account = (
+        await client.post("/api/v1/paper/accounts", json={
+            "name": "eval-paper",
+            "ownerId": "tester",
+            "initialCash": 100_000,
+        })
+    ).json()
+    aid = account["id"]
+    resp = await client.get(f"/api/v1/paper/accounts/{aid}/evaluation")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["tradeDate"] is not None
+    assert "sessionStatus" in payload
+    assert payload["strategyBound"] is False
+    assert payload["targetGross"] == 0
+    assert payload["driftGross"] == 0
+    assert payload["targets"] == []
+
+
+async def test_paper_account_can_bind_strategy_version(client_session):
+    client, session = client_session
+    strategy = Strategy(
+        name="bindable-strategy",
+        family="trend",
+        type="rule",
+        owner_id="tester",
+        status="paper",
+    )
+    session.add(strategy)
+    await session.flush()
+    version = StrategyVersion(strategy_id=strategy.id, version="v1", status="published")
+    session.add(version)
+    await session.commit()
+
+    account = (
+        await client.post("/api/v1/paper/accounts", json={
+            "name": "bind-paper",
+            "ownerId": "tester",
+            "initialCash": 100_000,
+        })
+    ).json()
+    resp = await client.put(
+        f"/api/v1/paper/accounts/{account['id']}/strategy",
+        json={"strategyId": strategy.id, "strategyVersionId": version.id},
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["strategyId"] == strategy.id
+    assert payload["strategyVersionId"] == version.id

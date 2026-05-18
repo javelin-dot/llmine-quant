@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.websocket import manager as ws_manager
 from app.db.session import get_db
 from app.domains.execution.models import AgentTrace, Approval, Order
 from app.domains.execution.schemas import (
@@ -17,11 +18,8 @@ from app.domains.execution.schemas import (
     FillRateMetric,
     OrderBookRow,
     PreTradeCheckOut,
-    RejectReason,
-    SlippageBucket,
     SlippageMetric,
 )
-from app.core.websocket import manager as ws_manager
 from app.services.audit_service import AuditService
 
 router = APIRouter()
@@ -37,36 +35,19 @@ _STATUS_TONE = {
     "rejected": "red", "canceled": "gray",
 }
 
-# ── Static / computed data (metrics, pre-trade checks, agent traces) ──────────
-# These don't have live DB sources yet; kept as well-structured constants.
+# ── Derived execution analytics (fills, rejects) populated when trade history aggregates exist ──
 
-_PRE_TRADE_CHECKS = [
-    PreTradeCheckOut(name="单票集中上限", current=0.085, limit=0.100, status="pass", statusTone="green", note="个股权重 8.5%，低于 10% 上限"),
-    PreTradeCheckOut(name="行业集中上限", current=0.220, limit=0.300, status="pass", statusTone="green", note="新能源行业 22%，低于 30% 上限"),
-    PreTradeCheckOut(name="单日亏损限额", current=0.032, limit=0.050, status="pass", statusTone="green", note="当日已实现+浮亏 3.2%，低于 5% 限额"),
-    PreTradeCheckOut(name="净敞口限额", current=0.650, limit=0.800, status="pass", statusTone="green", note="净多头 65%，低于 80% 上限"),
-    PreTradeCheckOut(name="VaR 限额", current=1.28, limit=2.00, status="pass", statusTone="green", note="日 VaR 1.28%，低于 2% 限额"),
-]
+_PRE_TRADE_CHECKS: list[PreTradeCheckOut] = []
 
 _METRICS = ExecutionMetrics(
     slippage=SlippageMetric(
-        avgBps=3.2,
-        p50Bps=2.8,
-        p95Bps=12.5,
-        buckets=[
-            SlippageBucket(range="0-2", count=45),
-            SlippageBucket(range="2-5", count=32),
-            SlippageBucket(range="5-10", count=15),
-            SlippageBucket(range="10-20", count=6),
-            SlippageBucket(range=">20", count=2),
-        ],
+        avgBps=0.0,
+        p50Bps=0.0,
+        p95Bps=0.0,
+        buckets=[],
     ),
-    fillRate=FillRateMetric(total=100, filled=82, partial=12, rejected=4, canceled=2),
-    rejectReasons=[
-        RejectReason(reason="价格超出涨跌停限制", count=2, tone="red"),
-        RejectReason(reason="账户资金不足", count=1, tone="yellow"),
-        RejectReason(reason="风控拦截", count=1, tone="purple"),
-    ],
+    fillRate=FillRateMetric(total=0, filled=0, partial=0, rejected=0, canceled=0),
+    rejectReasons=[],
 )
 
 
@@ -180,8 +161,8 @@ async def _get_summary(db: AsyncSession) -> ExecutionSummary:
         urgent=int(urgent),
         blocked=int(blocked),
         approved24h=int(approved24h),
-        avgLatencySec=2.4,
-        successRate=0.96,
+        avgLatencySec=0.0,
+        successRate=0.0,
     )
 
 

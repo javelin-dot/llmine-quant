@@ -26,14 +26,7 @@ from app.services.audit_service import AuditService
 router = APIRouter()
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-_HITL_RULES = [
-    HitlRule(rule="实盘订单审批", desc="所有实盘账户订单需人工审批", status="approval", statusTone="red"),
-    HitlRule(rule="策略上线审批", desc="策略从模拟盘切换到实盘需审批", status="approval", statusTone="red"),
-    HitlRule(rule="大额交易提醒", desc="单笔交易超过 50 万需提醒", status="review", statusTone="yellow"),
-    HitlRule(rule="数据异常处理", desc="数据漂移超过阈值自动暂停策略", status="auto", statusTone="green"),
-    HitlRule(rule="熔断恢复", desc="L2 及以上熔断恢复需人工确认", status="approval", statusTone="red"),
-    HitlRule(rule="账户资金变动", desc="单日净出入金超过 10 万需审计确认", status="review", statusTone="yellow"),
-]
+_HITL_RULES: list[HitlRule] = []
 
 _LEVEL_TONE = {"low": "green", "medium": "yellow", "high": "red", "critical": "red"}
 _ACTOR_TONE = {"human": "yellow", "agent": "blue", "system": "green"}

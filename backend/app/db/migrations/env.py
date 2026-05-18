@@ -30,6 +30,15 @@ from app.domains.backtest.models import (  # noqa: F401
     StressResult,
 )
 from app.domains.data.models import MarketBarDaily, StockInfo  # noqa: F401
+from app.domains.explain.models import (  # noqa: F401
+    AttributionItem,
+    BiasGateCheck,
+    ConfidenceRadarAxis,
+    DecisionStep,
+    LineageRecord,
+    SignalExplanation,
+    SimilarCase,
+)
 from app.domains.execution.paper_models import (  # noqa: F401
     PaperAccount,
     PaperFill,

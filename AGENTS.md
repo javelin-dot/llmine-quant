@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -78,7 +78,7 @@ app/core/        → Cross-cutting: config, logging, JWT auth, tracing, WebSocke
 
 `app/core/config.py` auto-detects credentials:
 1. Explicit env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
-2. `~/.claude/settings.json` (Claude Code credentials)
+2. `~/.Codex/settings.json` (Codex credentials)
 3. `~/.codex/auth.json`
 4. Falls back to mock mode
 

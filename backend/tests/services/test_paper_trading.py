@@ -228,3 +228,73 @@ async def test_breach_recorded_when_drawdown_exceeds_threshold(session):
     assert summary.breaches >= 1
     assert breaches
     assert any(b.rule in {"daily_loss", "max_drawdown"} for b in breaches)
+
+
+async def test_manual_order_enforces_lot_size_and_t1(session):
+    dates = await _seed_bars(session, "600519.SH", 1)
+    account = await _make_account(session)
+    engine = PaperTradingEngine(session)
+
+    buy = await engine.submit_manual_order(
+        account.id, symbol="600519.SH", side="buy", quantity=150, trade_date=dates[-1]
+    )
+    assert buy.target_quantity == 100
+    assert buy.status == "filled"
+
+    sell = await engine.submit_manual_order(
+        account.id, symbol="600519.SH", side="sell", quantity=100, trade_date=dates[-1]
+    )
+    assert sell.status == "rejected"
+    assert sell.rejection_reason == "T+1 unavailable quantity"
+
+
+async def test_manual_order_lifecycle_supports_queue_replace_cancel_and_match(session):
+    dates = await _seed_bars(session, "600519.SH", 1)
+    account = await _make_account(session)
+    engine = PaperTradingEngine(session)
+
+    queued = await engine.submit_manual_order(
+        account.id,
+        symbol="600519.SH",
+        side="buy",
+        quantity=180,
+        trade_date=dates[-1],
+        execution_mode="queue",
+    )
+    assert queued.status == "pending"
+    assert queued.target_quantity == 100
+
+    replaced = await engine.replace_order(account.id, queued.id, quantity=260)
+    assert replaced.target_quantity == 200
+
+    filled, rejected = await engine.match_pending_orders(account.id, dates[-1])
+    await session.refresh(replaced)
+    assert filled == 1
+    assert rejected == 0
+    assert replaced.status == "filled"
+    assert replaced.filled_quantity == 200
+
+    cancel_me = await engine.submit_manual_order(
+        account.id,
+        symbol="600519.SH",
+        side="buy",
+        quantity=100,
+        trade_date=dates[-1],
+        execution_mode="queue",
+    )
+    canceled = await engine.cancel_order(account.id, cancel_me.id)
+    assert canceled.status == "canceled"
+
+
+async def test_evaluation_snapshot_is_empty_without_bound_strategy(session):
+    symbols = [f"00000{i}.SZ" for i in range(1, 13)]
+    await _seed_universe(session, symbols, 25)
+    account = await _make_account(session)
+    engine = PaperTradingEngine(session)
+
+    snapshot = await engine.evaluation_snapshot(account.id)
+    assert snapshot.trade_date is not None
+    assert snapshot.strategy_bound is False
+    assert snapshot.targets == ()
+    assert snapshot.target_gross == 0
+    assert snapshot.drift_gross == 0

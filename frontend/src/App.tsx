@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { api, authStore } from './lib/api'
 import { strategyWs, executionWs, riskWs } from './lib/ws'
 import Login from './screens/Login'
@@ -14,19 +15,18 @@ import Security from './screens/Security'
 import Collaboration from './screens/Collaboration'
 import Audit from './screens/Audit'
 import Paper from './screens/Paper'
-import Agent from './screens/Agent'
+import Settings from './screens/Settings'
 
-type Screen = 'dashboard' | 'agent' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit' | 'paper'
+type Screen = 'dashboard' | 'strategy' | 'backtest' | 'explain' | 'portfolio' | 'execution' | 'risk' | 'data' | 'security' | 'collaboration' | 'audit' | 'paper'
 type ModalType = 'global' | 'kill' | 'create' | 'autopilot' | 'approve' | 'pause'
 
-const VALID_SCREENS: Screen[] = ['dashboard', 'agent', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit', 'paper']
+const VALID_SCREENS: Screen[] = ['dashboard', 'strategy', 'backtest', 'explain', 'portfolio', 'execution', 'risk', 'data', 'security', 'collaboration', 'audit', 'paper']
 const VALID_MODALS: ModalType[] = ['global', 'kill', 'create', 'autopilot', 'approve', 'pause']
 
 type NavEntry = { target: Screen; label: string; abbr: string }
 
 const navItems: NavEntry[] = [
   { target: 'dashboard', label: 'Dashboard', abbr: '主页' },
-  { target: 'agent', label: 'Agent', abbr: 'Agent' },
   { target: 'strategy', label: '策略工厂', abbr: '策略' },
   { target: 'backtest', label: '回测实验室', abbr: '回测' },
   { target: 'paper', label: '模拟盘', abbr: '模拟' },
@@ -43,17 +43,33 @@ const navControl: NavEntry[] = [
   { target: 'audit', label: '审计追踪', abbr: '审计' },
 ]
 
-const NAV_MOBILE_ORDER: Screen[] = ['dashboard', 'agent', 'strategy', 'backtest', 'explain', 'execution', 'risk']
+const NAV_MOBILE_ORDER: Screen[] = ['dashboard', 'strategy', 'backtest', 'explain', 'execution', 'risk']
 
 const navLookup: NavEntry[] = [...navItems, ...navControl]
 
+function screenFromPathSegment(pathname: string): Screen | null {
+  const seg = pathname.split('/').filter(Boolean)[0]
+  if (!seg) return null
+  return (VALID_SCREENS as string[]).includes(seg) ? (seg as Screen) : null
+}
+
+function pathForScreen(screen: Screen): string {
+  return `/${screen}`
+}
+
+type CurrentUser = { userId: string; name: string; email: string; roles: string[]; is_admin: boolean }
+
 export default function App() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [modal, setModal] = useState<ModalType | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [backtestContext, setBacktestContext] = useState<{ strategyId?: string; taskId?: string }>({})
   const [paperContext, setPaperContext] = useState<{ accountId?: string }>({})
-  const [currentUser, setCurrentUser] = useState<{ userId: string; name: string; email: string } | null>(null)
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
   const [globalData, setGlobalData] = useState<{
     meta: { product: string; subtitle: string }
@@ -65,8 +81,15 @@ export default function App() {
   useEffect(() => {
     if (authStore.isAuthenticated()) {
       api.auth.me().then(u => {
-        if (u) setCurrentUser({ userId: u.user_id, name: u.name, email: u.email })
-        else authStore.clearToken()
+        if (u) {
+          setCurrentUser({
+            userId: u.user_id,
+            name: u.name,
+            email: u.email,
+            roles: u.roles,
+            is_admin: u.is_admin ?? u.roles.includes('admin'),
+          })
+        } else authStore.clearToken()
         setAuthChecked(true)
       }).catch(() => { authStore.clearToken(); setAuthChecked(true) })
     } else {
@@ -106,13 +129,81 @@ export default function App() {
 
   const toggleSidebar = useCallback(() => setSidebarCollapsed((v) => !v), [])
 
-  const switchScreen = useCallback((target: Screen) => {
-    setScreen(target)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
+  const switchScreen = useCallback(
+    (target: Screen) => {
+      navigate(pathForScreen(target))
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    },
+    [navigate],
+  )
 
   const openModal = useCallback((type: ModalType) => setModal(type), [])
   const closeModal = useCallback(() => setModal(null), [])
+
+  const handleLogout = useCallback(async () => {
+    const token = authStore.getToken()
+    if (token) await api.auth.logout(token).catch(() => {})
+    authStore.clearToken()
+    setCurrentUser(null)
+  }, [])
+
+  const handleLoginSuccess = useCallback(async (partial: { userId: string; name: string; email: string }) => {
+    const full = await api.auth.me()
+    setCurrentUser({
+      userId: full?.user_id ?? partial.userId,
+      name: full?.name ?? partial.name,
+      email: full?.email ?? partial.email,
+      roles: full?.roles ?? [],
+      is_admin: Boolean(full?.is_admin) || Boolean(full?.roles?.includes('admin')),
+    })
+  }, [])
+
+  const canManageUsers =
+    Boolean(currentUser?.roles.includes('admin')) || Boolean(currentUser?.is_admin)
+
+  useEffect(() => {
+    if (!showSettings || !currentUser) return
+    let cancelled = false
+    api.auth.me().then((u) => {
+      if (!u || cancelled) return
+      setCurrentUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              userId: u.user_id,
+              name: u.name,
+              email: u.email,
+              roles: u.roles,
+              is_admin: u.is_admin ?? u.roles.includes('admin'),
+            }
+          : null,
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [showSettings])
+
+  // Keep URL pathname in sync with the active workspace screen (bookmarkable routes).
+  useEffect(() => {
+    if (!authChecked || !currentUser) return
+
+    const p = location.pathname
+    if (p === '/' || p === '') {
+      navigate('/dashboard', { replace: true })
+      setScreen('dashboard')
+      return
+    }
+
+    const s = screenFromPathSegment(p)
+    if (!s) {
+      navigate('/dashboard', { replace: true })
+      setScreen('dashboard')
+      return
+    }
+
+    setScreen(s)
+  }, [authChecked, currentUser, location.pathname, navigate])
 
   const handleScreenNavigate = useCallback((target: string) => {
     // Support compound targets like `backtest:strategyId=abc`, `backtest:taskId=xyz`,
@@ -159,8 +250,6 @@ export default function App() {
     switch (screen) {
       case 'dashboard':
         return <Dashboard onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
-      case 'agent':
-        return <Agent onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'strategy':
         return <Strategy onNavigate={handleScreenNavigate} onModal={handleScreenModal} />
       case 'backtest':
@@ -198,7 +287,7 @@ export default function App() {
   if (!authChecked) return null
 
   if (!currentUser) {
-    return <Login onSuccess={u => setCurrentUser(u)} />
+    return <Login onSuccess={handleLoginSuccess} />
   }
 
   return (
@@ -249,40 +338,15 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="side-card">
-            <div className="label">System Health</div>
-            <div className="score">
-              <strong>{globalData?.system.healthScore ?? '—'}</strong>
-              <span>{globalData?.system.healthStatusLabel ?? '—'}</span>
-            </div>
-            <div className="mini-bars" aria-hidden="true">
-              {(globalData?.system.healthBarHeights ?? []).map((h, i) => (
-                <i key={i} style={{ height: `${h}px` }} />
-              ))}
-            </div>
-          </div>
-
-          <div className="session-card" aria-label="会话">
-            <span className="session-user" title={currentUser.email}>
-              <span className="session-user-dot" aria-hidden="true" />
-              <span className="session-user-copy">
-                <strong>{currentUser.name}</strong>
-                <small>{currentUser.email}</small>
-              </span>
-            </span>
-            <button
-              type="button"
-              className="btn secondary session-logout"
-              onClick={async () => {
-                const token = authStore.getToken()
-                if (token) await api.auth.logout(token).catch(() => {})
-                authStore.clearToken()
-                setCurrentUser(null)
-              }}
-            >
-              退出
-            </button>
-          </div>
+          <button
+            type="button"
+            className="settings-nav-btn"
+            title="设置（账户、系统状态、AI …）"
+            onClick={() => setShowSettings(true)}
+          >
+            <span className="settings-nav-icon">⚙</span>
+            <span className="nav-label">设置</span>
+          </button>
         </div>
       </aside>
 
@@ -296,16 +360,7 @@ export default function App() {
               <small>{currentUser.email}</small>
             </span>
           </span>
-          <button
-            type="button"
-            className="btn secondary session-logout"
-            onClick={async () => {
-              const token = authStore.getToken()
-              if (token) await api.auth.logout(token).catch(() => {})
-              authStore.clearToken()
-              setCurrentUser(null)
-            }}
-          >
+          <button type="button" className="btn secondary session-logout" onClick={handleLogout}>
             退出
           </button>
         </header>
@@ -330,6 +385,17 @@ export default function App() {
           )
         })}
       </div>
+
+      {/* Settings Overlay */}
+      {showSettings && currentUser && (
+        <Settings
+          onClose={() => setShowSettings(false)}
+          currentUser={currentUser}
+          system={globalData?.system ?? null}
+          onLogout={handleLogout}
+          canManageUsers={canManageUsers}
+        />
+      )}
 
       {/* Modal */}
       {modal && modalData && (

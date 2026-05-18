@@ -26,9 +26,20 @@ export default function Dashboard({ onNavigate, onModal }: DashboardProps) {
 
   if (!data) return <div className="dashboard-root">Loading Dashboard…</div>
 
+  const overviewEmpty =
+    data.marketIndices.length === 0 &&
+    data.strategies.length === 0 &&
+    data.alerts.length === 0 &&
+    data.agents.length === 0
+
   return (
     <DashboardProvider value={data}>
       <div className="dashboard-root">
+        {overviewEmpty ? (
+          <div className="bt-empty-line" style={{ padding: '0.65rem 1rem', opacity: 0.85 }}>
+            暂无仪表盘业务数据（行情、策略、告警等为实时聚合结果）。连接后端并产生数据后即可展示。
+          </div>
+        ) : null}
         <DashboardSystemBar onModal={onModal} />
         <MarketBar />
         <div className="dashboard-main">

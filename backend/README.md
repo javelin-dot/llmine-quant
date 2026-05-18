@@ -11,7 +11,7 @@ pip install -e ".[dev]"
 # Run migrations
 alembic upgrade head
 
-# Seed dev data
+# Ensure DB schema + optional default login users (admin@llmine.local / admin123)
 python scripts/seed_dev_data.py
 
 # Run API server

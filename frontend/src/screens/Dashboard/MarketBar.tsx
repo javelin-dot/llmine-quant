@@ -13,6 +13,9 @@ export default function MarketBar() {
   return (
     <div className="market-bar">
       <div className="market-bar-track">
+        {data.marketIndices.length === 0 ? (
+          <span className="market-bar-empty bt-empty-line">暂无指数行情快照（接入数据源后将显示）</span>
+        ) : null}
         {data.marketIndices.map((idx) => {
           const positive = idx.change >= 0
           return (

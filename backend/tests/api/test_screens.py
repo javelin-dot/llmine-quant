@@ -18,6 +18,27 @@ async def client():
 
 
 @pytest.fixture
+async def seeded_explain_signal() -> None:
+    """Exercise-only Explain snapshot for Explain API tests."""
+    from tests.fixtures.explain_seed import (
+        FIXTURE_TRACE_ID,
+        reset_explain_fixture_pending,
+        seed_explain_fixture_signal,
+    )
+
+    async with AsyncSessionLocal() as session:
+        await seed_explain_fixture_signal(session)
+        await reset_explain_fixture_pending(session, FIXTURE_TRACE_ID)
+        await session.commit()
+
+    yield
+
+    async with AsyncSessionLocal() as session:
+        await reset_explain_fixture_pending(session, FIXTURE_TRACE_ID)
+        await session.commit()
+
+
+@pytest.fixture
 async def seeded_circuit_l2():
     """Seed an L2 circuit breaker and yield its ID; clean up after."""
     async with AsyncSessionLocal() as session:
@@ -109,7 +130,7 @@ class TestDashboard:
         data = resp.json()
         assert "meta" in data
         assert "marketIndices" in data
-        assert len(data["marketIndices"]) > 0
+        assert isinstance(data["marketIndices"], list)
 
     async def test_system_health(self, client: AsyncClient):
         resp = await client.get("/api/v1/dashboard/system-health")
@@ -236,13 +257,52 @@ class TestExecution:
 
 
 class TestExplain:
-    async def test_overview(self, client: AsyncClient):
+    async def test_overview_empty(self, client: AsyncClient):
+        from tests.fixtures.explain_seed import purge_explain_records
+
+        async with AsyncSessionLocal() as session:
+            await purge_explain_records(session)
+            await session.commit()
+
+        resp = await client.get("/api/v1/explain/overview")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "signalHeader" in data
+        assert data["signalHeader"]["traceId"] == ""
+        assert data["signalHeader"]["status"] == "暂无数据"
+
+    async def test_overview_fixture(self, client: AsyncClient, seeded_explain_signal):  # noqa: ARG002
         resp = await client.get("/api/v1/explain/overview")
         assert resp.status_code == 200
         data = resp.json()
         assert "signalHeader" in data
         assert "attribution" in data
         assert "decisionChain" in data
+
+    async def test_signal_approve_updates_overview(self, client: AsyncClient, seeded_explain_signal):  # noqa: ARG002
+        r0 = await client.get("/api/v1/explain/overview")
+        assert r0.status_code == 200
+        tid = r0.json()["signalHeader"]["traceId"]
+        assert r0.json()["signalHeader"]["status"] == "待审批"
+
+        r1 = await client.post("/api/v1/explain/signal/approve", json={"traceId": tid})
+        assert r1.status_code == 200
+        assert r1.json()["status"] == "approved"
+
+        r2 = await client.get("/api/v1/explain/overview")
+        assert r2.status_code == 200
+        body = r2.json()
+        assert body["signalHeader"]["status"] == "已批准"
+        assert body["decisionChain"][-1]["tone"] == "green"
+        assert "审批" in body["decisionChain"][-1]["desc"]
+
+        r3 = await client.post("/api/v1/explain/signal/approve", json={"traceId": tid})
+        assert r3.status_code == 200
+        assert r3.json()["status"] == "already_approved"
+
+    async def test_signal_approve_unknown_trace(self, client: AsyncClient):
+        resp = await client.post("/api/v1/explain/signal/approve", json={"traceId": "unknown-trace"})
+        assert resp.status_code == 404
 
 
 class TestSecurity:
